@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # vLLM OpenAI-compatible inference server
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-inference
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+    ports:
+      - "8000:8000"  # OpenAI API compatible endpoint
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface  # Model cache
+      - ./results:/results  # Telemetry output
+    command: >
+      --host 0.0.0.0
+      --port 8000
+      --model ${MODEL_NAME:-meta-llama/Llama-3.1-70B-Instruct}
+      --tensor-parallel-size ${TENSOR_PARALLEL:-1}
+      --gpu-memory-utilization ${GPU_MEMORY_UTIL:-0.95}
+      --max-model-len ${MAX_MODEL_LEN:-32768}
+      --enable-prefix-caching
+      --trust-remote-code
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - inference-net
+
+  # Benchmarking runner
+  bench-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bench-runner
+    depends_on:
+      vllm:
+        condition: service_healthy
+    environment:
+      - VLLM_ENDPOINT=http://vllm:8000/v1
+      - CONFIG_PATH=${CONFIG_PATH:-/configs/llama3_70b_sweep.yaml}
+    volumes:
+      - ./configs:/configs:ro  # Read-only config files
+      - ./core:/app/core:ro    # Python modules
+      - ./results:/results     # Write telemetry & results
+    command: python /app/core/bench_runner.py --config ${CONFIG_PATH:-/configs/llama3_70b_sweep.yaml}
+    networks:
+      - inference-net
+    profiles:
+      - benchmark  # Only start when explicitly requested
+
+  # GPU telemetry collector (optional)
+  nvitop:
+    image: nvidia/cuda:12.3.0-base-ubuntu22.04
+    container_name: gpu-monitor
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./results:/results
+    command: >
+      bash -c "
+      apt-get update && apt-get install -y python3 python3-pip &&
+      pip3 install nvitop &&
+      nvitop --once > /results/gpu_snapshot_$(date +%Y%m%d_%H%M%S).txt
+      "
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - inference-net
+    profiles:
+      - monitoring  # Only start when explicitly requested
+
+networks:
+  inference-net:
+    driver: bridge
+
+volumes:
+  huggingface-cache:

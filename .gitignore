@@ -1,0 +1,90 @@
+# Benchmark Results and Logs
+results/
+*.json
+*.csv
+*.log
+
+# Environment and Secrets
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+notebooks/*.html
+notebooks/.ipynb_checkpoints/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# HuggingFace Cache (if stored locally)
+.cache/
+huggingface_cache/
+models/
+
+# System Files
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+*.temp
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Telemetry and Monitoring Data
+*.nvml
+*.nvprof
+*.nsys-rep
+
+# Temporary Analysis Files
+scratch/
+temp/
+tmp/
+
+# Keep results directory structure but ignore contents
+!results/.gitkeep
