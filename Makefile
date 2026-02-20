@@ -29,6 +29,7 @@
 # ==============================================================================
 
 DC       := docker compose
+PYTHON   := python3
 LABEL    ?=   # optional: filter to a single model label from models.yaml
 
 # ==============================================================================
@@ -36,13 +37,13 @@ LABEL    ?=   # optional: filter to a single model label from models.yaml
 # ==============================================================================
 
 sweep:
-	python core/sweep.py --bench context-sweep $(if $(LABEL),--label $(LABEL),)
+	$(PYTHON) core/sweep.py --bench context-sweep $(if $(LABEL),--label $(LABEL),)
 
 kv-analysis:
-	python core/sweep.py --bench kv-analysis $(if $(LABEL),--label $(LABEL),)
+	$(PYTHON) core/sweep.py --bench kv-analysis $(if $(LABEL),--label $(LABEL),)
 
 sanity:
-	python core/sweep.py --bench sanity $(if $(LABEL),--label $(LABEL),)
+	$(PYTHON) core/sweep.py --bench sanity $(if $(LABEL),--label $(LABEL),)
 
 # Boot a single model without running a benchmark (useful for exploratory runs)
 serve:
@@ -51,7 +52,7 @@ serve:
 		echo "Labels are defined in models.yaml"; \
 		exit 1; \
 	fi
-	python core/sweep.py --serve-only --label $(LABEL)
+	$(PYTHON) core/sweep.py --serve-only --label $(LABEL)
 
 # ==============================================================================
 # BENCH-ONLY  —  run against whatever vLLM server is currently up
