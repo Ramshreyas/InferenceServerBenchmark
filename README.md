@@ -31,6 +31,7 @@ Everything else is driven automatically by `make`.
 - **OS**: Ubuntu 22.04+
 - **Docker**: Engine 24.0+ with NVIDIA Container Toolkit
 - **Docker Compose**: v2.0+
+- **make**: `sudo apt install make -y` (not installed by default on Ubuntu Server)
 
 ### Local Development Machine
 - Git (for code sync)
