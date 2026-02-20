@@ -9,10 +9,12 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0
+      - LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64
     ports:
       - "8000:8000"  # OpenAI API compatible endpoint
     volumes:
-      - ~/.cache/huggingface:/root/.cache/huggingface  # Model cache
+      - ~/.cache/huggingface:/root/.cache/hugg
+      - /usr/local/cuda-13.1/compat:/usr/local/cuda/compat:ro  # CUDA 13.1 compat libs for Blackwellingface  # Model cache
       - ./results:/results  # Telemetry output
     command: >
       --host 0.0.0.0
