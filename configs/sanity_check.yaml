@@ -7,7 +7,7 @@ benchmark:
   output_prefix: "sanity_check"
 
 model:
-  name: "meta-llama/Llama-3.1-8B-Instruct"  # Smaller model for quick testing
+  name: "mistralai/Mistral-7B-Instruct-v0.3"  # Non-gated model for quick testing
   quantization: "none"
   tensor_parallel_size: 1
   enable_prefix_caching: false
