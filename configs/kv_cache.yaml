@@ -1,0 +1,45 @@
+# KV Cache Analysis Config
+# ─────────────────────────────────────────────────────────────────────────────
+# Purpose: Measure how KV cache behaviour changes with context length, and
+#          quantify the benefit of prefix caching via back-to-back comparison.
+#
+# sweep.py runs this config TWICE per model:
+#   Pass 1 – prefix caching ON  (vLLM --enable-prefix-caching)
+#   Pass 2 – prefix caching OFF (vLLM restarted without the flag)
+#
+# The repeated-prompt fraction below ensures a realistic mix of "warm cache"
+# (same long system prompt) and "cold" (novel user turns) traffic.
+# ─────────────────────────────────────────────────────────────────────────────
+
+benchmark:
+  name: "KV Cache Analysis"
+  description: >
+    Context-length sweep measuring TTFT, ITL, and VRAM under prefix-caching on/off.
+    Run twice via `make kv-analysis` to capture both passes.
+  output_prefix: "kv_cache"
+
+model:
+  name: "auto"          # auto-detected from running vLLM server
+  quantization: "auto"
+  tensor_parallel_size: 1
+  enable_prefix_caching: true   # informational only – set by sweep.py in .env
+
+# Test shorter context lengths only – focus is cache behaviour, not max context
+context_lengths:
+  - 4096
+  - 8192
+  - 16384
+  - 32768
+
+requests:
+  num_requests: 60
+  concurrent_requests: 6
+  arrival_pattern: "poisson"
+  rate_per_second: 1.5
+  prompt_tokens_min: 512
+  prompt_tokens_max: 1024
+  completion_tokens: 256
+
+telemetry:
+  sample_interval_sec: 0.5    # Higher frequency to capture transient VRAM spikes
+  collect_gpu_stats: true

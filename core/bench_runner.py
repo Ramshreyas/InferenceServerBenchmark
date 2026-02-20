@@ -39,6 +39,23 @@ class BenchmarkRunner:
         
         self.telemetry = TelemetryCollector() if self.config.get('telemetry', {}).get('collect_gpu_stats') else None
         
+        # Resolve model name: use config value, or auto-detect from vLLM if 'auto'
+        configured_name = self.config['model']['name']
+        if configured_name == 'auto':
+            self._model_name = self._detect_model_name()
+        else:
+            self._model_name = configured_name
+        
+    def _detect_model_name(self) -> str:
+        """Query vLLM for the name of the currently loaded model."""
+        try:
+            models = self.client.models.list()
+            name = models.data[0].id
+            self.logger.info(f"Auto-detected model: {name}")
+            return name
+        except Exception as e:
+            raise RuntimeError(f"Could not auto-detect model name from vLLM: {e}")
+
     def _load_config(self, config_path: str) -> Dict:
         """Load YAML configuration file."""
         with open(config_path, 'r') as f:
@@ -58,7 +75,7 @@ class BenchmarkRunner:
         
         try:
             response = self.client.chat.completions.create(
-                model=self.config['model']['name'],
+                model=self._model_name,
                 messages=[
                     {"role": "system", "content": self.config['requests'].get('system_prompt', '')},
                     {"role": "user", "content": prompt}

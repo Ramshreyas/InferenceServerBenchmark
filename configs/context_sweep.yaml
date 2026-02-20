@@ -1,0 +1,55 @@
+# Generic Context Window Sweep
+# Auto-detects the loaded model from vLLM - works with any model
+# Use this instead of model-specific sweep configs
+
+benchmark:
+  name: "Context Window Sweep"
+  description: "Measure TTFT, ITL, and VRAM usage across context lengths"
+  output_prefix: "context_sweep"
+
+model:
+  name: "auto"  # Auto-detected from the running vLLM server
+  quantization: "auto"
+  tensor_parallel_size: 1
+  enable_prefix_caching: true
+
+# Context length sweep
+context_lengths:
+  - 8192
+  - 32768
+  - 65536
+  - 98304
+  - 131072
+
+# Request configuration
+requests:
+  num_requests: 50
+  concurrent_requests: 10
+  arrival_pattern: "poisson"
+  rate_per_second: 2.0
+
+  prompt_tokens_min: 512
+  prompt_tokens_max: 2048
+  completion_tokens: 512
+
+  system_prompt: |
+    You are a helpful AI assistant. Provide detailed and accurate responses.
+
+metrics:
+  - ttft
+  - itl
+  - throughput
+  - memory_usage
+  - kv_cache_usage
+
+telemetry:
+  sample_interval_sec: 1.0
+  collect_gpu_stats: true
+  collect_power_draw: true
+  collect_temperature: true
+  collect_memory_clock: true
+
+targets:
+  ttft_ms: 200
+  itl_ms: 50
+  throughput_tokens_per_sec: 1000

@@ -1,0 +1,43 @@
+# =============================================================================
+# models.yaml  —  THE ONLY FILE YOU NEED TO EDIT
+# =============================================================================
+# List every model you want to benchmark. `make sweep`, `make kv-analysis`
+# and `make multitenancy-shared` will iterate over this list automatically.
+#
+# Fields per model:
+#   name            HuggingFace model ID
+#   label           Short slug used in output filenames (no spaces)
+#   quantization    none | fp8 | awq | gptq
+#   max_model_len   Maximum context length in tokens (must fit in VRAM)
+#   gpu_memory_util Fraction of GPU VRAM to allocate (0.0 – 1.0)
+#   tensor_parallel Number of GPUs to shard across (1 for single-GPU)
+#
+# All models below are publicly available without gated access.
+# =============================================================================
+
+models:
+
+  # ── Small (7B) ──────────────────────────────────────────────────────────────
+
+  - name: mistralai/Mistral-7B-Instruct-v0.3
+    label: mistral-7b
+    quantization: none
+    max_model_len: 32768
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+
+  - name: Qwen/Qwen2.5-7B-Instruct
+    label: qwen2.5-7b
+    quantization: none
+    max_model_len: 32768
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+
+  # ── Large (72B, FP8 – fits in 96 GB single GPU) ─────────────────────────────
+
+  - name: Qwen/Qwen2.5-72B-Instruct
+    label: qwen2.5-72b-fp8
+    quantization: fp8
+    max_model_len: 16384        # Keep conservative for 96 GB headroom
+    gpu_memory_util: 0.95
+    tensor_parallel: 1
