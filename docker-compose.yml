@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # vLLM OpenAI-compatible inference server
   vllm:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:cu130-nightly
     container_name: vllm-inference
     runtime: nvidia
     environment:
