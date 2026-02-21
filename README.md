@@ -32,6 +32,14 @@ Everything else is driven automatically by `make`.
 - **Docker**: Engine 24.0+ with NVIDIA Container Toolkit
 - **Docker Compose**: v2.0+
 - **make**: `sudo apt install make -y` (not installed by default on Ubuntu Server)
+- **HuggingFace CLI** (`hf`): required for `make prefetch`
+
+  ```bash
+  sudo apt install python3-pip pipx -y
+  pipx install huggingface_hub[cli]
+  pipx ensurepath
+  source ~/.bashrc
+  ```
 
 ### Local Development Machine
 - Git (for code sync)
@@ -101,6 +109,7 @@ models:
 | `max_model_len` | integer | Reduce for large models to stay within 96 GB |
 | `gpu_memory_util` | 0.0 – 1.0 | 0.90–0.95 typical |
 | `tensor_parallel` | integer | 1 for single-GPU |
+| `topology` | `dense`, `sparse_moe` | MoE models load all expert weights into VRAM regardless of active param count |
 
 ---
 
@@ -175,6 +184,7 @@ make bench-kv-analysis
 | `make kv-analysis [LABEL=]` | KV cache analysis, prefix ON vs OFF |
 | `make sanity [LABEL=]` | Quick 10-request validation |
 | `make serve LABEL=<label>` | Start vLLM for one model (no bench) |
+| `make prefetch` | Pre-download all models in models.yaml to HF cache |
 | `make bench-sanity` | Bench against current server |
 | `make bench-context-sweep` | Bench against current server |
 | `make bench-kv-analysis` | Bench against current server |
@@ -197,6 +207,7 @@ make bench-kv-analysis
 ├── core/
 │   ├── sweep.py                 ← iterates models.yaml, drives docker compose
 │   ├── bench_runner.py          ← sends requests, collects metrics
+│   ├── prefetch.py              ← pre-downloads all models to HF cache
 │   ├── telemetry.py             ← GPU monitoring
 │   └── utils.py                 ← helpers
 ├── configs/
@@ -277,6 +288,20 @@ Driver / CUDA version mismatch. Verify:
 1. `cuda-compat-13-1` is installed on the host
 2. The compat volume mount exists in `docker-compose.yml`
 3. `LD_LIBRARY_PATH` includes `/usr/local/cuda/compat`
+
+### vLLM startup timeout on first run
+
+Large models (70B+) can take 15–30 minutes to download on first use. The sweep runner allows 600 s for startup — if you hit a timeout, pre-download all models first:
+
+```bash
+make prefetch   # downloads everything to ~/.cache/huggingface before any benchmark run
+```
+
+If the HF cache was previously written by Docker (root-owned), you may need to fix permissions first:
+
+```bash
+sudo chown -R $USER:$USER ~/.cache/huggingface/
+```
 
 ### OOM / Out of Memory
 
