@@ -9,8 +9,19 @@
 #   label           Short slug used in output filenames (no spaces)
 #   quantization    none | fp8 | awq | gptq
 #   max_model_len   Maximum context length in tokens (must fit in VRAM)
+#                   This is a hard ceiling enforced by vLLM at startup — any
+#                   benchmark request exceeding this length will be rejected.
+#                   Set it to the highest context_sweep.yaml sweep point that
+#                   fits in remaining VRAM after model weights are loaded.
 #   gpu_memory_util Fraction of GPU VRAM to allocate (0.0 – 1.0)
 #   tensor_parallel Number of GPUs to shard across (1 for single-GPU)
+#   topology        dense | sparse_moe
+#                   dense:      all parameters are active on every forward pass.
+#                   sparse_moe: Mixture-of-Experts — only a small subset of
+#                               parameters (the "active" params) are used per
+#                               token, but ALL expert weights still load into
+#                               VRAM. VRAM requirement is set by total param
+#                               count, not active param count.
 #
 # All models below are publicly available without gated access.
 # =============================================================================
