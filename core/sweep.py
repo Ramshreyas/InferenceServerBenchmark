@@ -86,7 +86,7 @@ def serve_model(model: dict, enable_prefix_caching: bool = True):
     write_env(model, enable_prefix_caching=enable_prefix_caching, hf_token=hf_token)
     run(["docker", "compose", "down"])
     run(["docker", "compose", "up", "-d", "vllm"])
-    wait_for_vllm()
+    wait_for_vllm(timeout=1800)  # large models can take 15-30 min to load on first run
 
 
 def run_bench(bench_key: str):
@@ -154,6 +154,7 @@ def main():
 
     # ── KV analysis: run each model TWICE (prefix caching on vs off) ──────────
     if args.bench == "kv-analysis":
+        failed = []
         for i, model in enumerate(models, 1):
             label = model.get("label", model["name"].split("/")[-1])
 
@@ -162,17 +163,39 @@ def main():
             for caching in (True, False):
                 tag = "prefix-ON" if caching else "prefix-OFF"
                 print(f"\n  ── {tag} ──")
-                serve_model(model, enable_prefix_caching=caching)
-                run_bench(args.bench)
+                try:
+                    serve_model(model, enable_prefix_caching=caching)
+                    run_bench(args.bench)
+                except Exception as e:
+                    print(f"  *** FAILED {label} ({tag}): {e} — skipping", file=sys.stderr)
+                    failed.append(f"{label} ({tag})")
+                    break  # skip prefix-OFF run if prefix-ON already failed
 
     # ── All other benchmarks: serve once, bench once ──────────────────────────
     else:
+        failed = []
         for i, model in enumerate(models, 1):
             label = model.get("label", model["name"].split("/")[-1])
             print(f"\n[{i}/{len(models)}] Serving: {model['name']}  (label={label})")
-            serve_model(model, enable_prefix_caching=True)
+            try:
+                serve_model(model, enable_prefix_caching=True)
+            except Exception as e:
+                print(f"  *** FAILED to start {label}: {e} — skipping", file=sys.stderr)
+                failed.append(label)
+                continue
             print(f"[{i}/{len(models)}] Benchmarking: {args.bench}")
-            run_bench(args.bench)
+            try:
+                run_bench(args.bench)
+            except Exception as e:
+                print(f"  *** FAILED bench for {label}: {e} — skipping", file=sys.stderr)
+                failed.append(label)
+
+        section(f"SWEEP COMPLETE: {args.bench}")
+        if failed:
+            print(f"WARNING: {len(failed)} model(s) failed and were skipped:")
+            for f in failed:
+                print(f"  - {f}")
+        return
 
     section(f"SWEEP COMPLETE: {args.bench}")
 

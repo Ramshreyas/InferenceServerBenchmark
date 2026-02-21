@@ -44,7 +44,7 @@ models:
     label: deepseek-r1-llama-70b
     quantization: fp8           # FP8 ~72 GB loaded
     max_model_len: 32768        # ~24 GB KV headroom → covers 8k/32k sweep points
-    gpu_memory_util: 0.95
+    gpu_memory_util: 0.90
     tensor_parallel: 1
     topology: dense
 
