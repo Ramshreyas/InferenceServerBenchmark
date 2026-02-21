@@ -91,9 +91,11 @@ class BenchmarkRunner:
             
             for chunk in response:
                 delta = chunk.choices[0].delta
-                # Accept tokens from either content (standard) or reasoning_content
-                # (reasoning/thinking models such as gpt-oss-120b, DeepSeek-R1, QwQ)
-                text = delta.content or getattr(delta, 'reasoning_content', None)
+                # Accept tokens from content (standard) or reasoning (vLLM's field
+                # for thinking/reasoning models such as gpt-oss-120b, DeepSeek-R1,
+                # QwQ). The 'reasoning' field arrives via model_extra since it is
+                # not part of the standard OpenAI SDK schema.
+                text = delta.content or (delta.model_extra or {}).get('reasoning')
                 if text:
                     token_time = time.perf_counter()
                     if first_token_time is None:
