@@ -31,7 +31,7 @@ def main():
     for i, model in enumerate(models, 1):
         name = model["name"]
         print(f"[{i}/{len(models)}] Downloading: {name}")
-        cmd = ["huggingface-cli", "download", name]
+        cmd = ["hf", "download", name]
         if hf_token:
             cmd += ["--token", hf_token]
         result = subprocess.run(cmd)
