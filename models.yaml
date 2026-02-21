@@ -17,27 +17,82 @@
 
 models:
 
-  # ── Small (7B) ──────────────────────────────────────────────────────────────
+  # ── Large (70B–120B) ─────────────────────────────────────────────────────────
+  # Dense: all weights active. Sparse MoE: all weights load into VRAM regardless
+  # of active-param count — VRAM requirement is determined by total param count.
+
+  - name: openai/gpt-oss-120b
+    label: gpt-oss-120b
+    quantization: none          # Pre-quantized mxfp4 (Blackwell-native 4-bit); ~60 GB loaded
+    max_model_len: 32768        # ~36 GB KV headroom → covers 8k/32k sweep points
+    gpu_memory_util: 0.95
+    tensor_parallel: 1
+    topology: dense
+
+  - name: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+    label: deepseek-r1-llama-70b
+    quantization: fp8           # FP8 ~72 GB loaded
+    max_model_len: 32768        # ~24 GB KV headroom → covers 8k/32k sweep points
+    gpu_memory_util: 0.95
+    tensor_parallel: 1
+    topology: dense
+
+  - name: Qwen/Qwen3-Next-80B-A3B-Thinking
+    label: qwen3-next-80b-thinking
+    quantization: fp8           # BF16 ~160 GB – FP8 brings it to ~80 GB; fits with tight headroom
+    max_model_len: 16384        # ~16 GB KV headroom → covers 8k/16k sweep points only
+    gpu_memory_util: 0.95
+    tensor_parallel: 1
+    topology: sparse_moe        # 80B total weights, 3B active per forward pass
+
+  # ── Medium (30B–32B) ─────────────────────────────────────────────────────────
+
+  - name: Qwen/Qwen3-30B-A3B-Thinking-2507
+    label: qwen3-30b-thinking
+    quantization: none          # BF16 ~60 GB loaded (MoE: small active KV footprint)
+    max_model_len: 65536        # ~36 GB KV headroom → covers 8k/32k/65k sweep points
+    gpu_memory_util: 0.92
+    tensor_parallel: 1
+    topology: sparse_moe        # 30B total weights, 3B active per forward pass
+
+  - name: Qwen/QwQ-32B
+    label: qwq-32b
+    quantization: fp8           # FP8 ~33 GB loaded
+    max_model_len: 65536        # ~63 GB KV headroom → covers 8k/32k/65k sweep points
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+    topology: dense
+
+  - name: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+    label: deepseek-r1-qwen-32b
+    quantization: fp8           # FP8 ~33 GB loaded
+    max_model_len: 65536        # ~63 GB KV headroom → covers 8k/32k/65k sweep points
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+    topology: dense
+
+  # ── Small (7B–8B) ────────────────────────────────────────────────────────────
+
+  - name: Qwen/Qwen3-8B
+    label: qwen3-8b
+    quantization: none          # BF16 ~16 GB loaded
+    max_model_len: 131072       # ~80 GB KV headroom → covers all sweep points incl. 131k
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+    topology: dense
+
+  - name: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+    label: deepseek-r1-qwen-7b
+    quantization: none          # BF16 ~15 GB loaded
+    max_model_len: 131072       # ~81 GB KV headroom → covers all sweep points incl. 131k
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+    topology: dense
 
   - name: mistralai/Mistral-7B-Instruct-v0.3
     label: mistral-7b
-    quantization: none
-    max_model_len: 32768
+    quantization: none          # BF16 ~15 GB loaded
+    max_model_len: 131072       # ~81 GB KV headroom → covers all sweep points incl. 131k
     gpu_memory_util: 0.90
     tensor_parallel: 1
-
-  - name: Qwen/Qwen2.5-7B-Instruct
-    label: qwen2.5-7b
-    quantization: none
-    max_model_len: 32768
-    gpu_memory_util: 0.90
-    tensor_parallel: 1
-
-  # ── Large (72B, FP8 – fits in 96 GB single GPU) ─────────────────────────────
-
-  - name: Qwen/Qwen2.5-72B-Instruct
-    label: qwen2.5-72b-fp8
-    quantization: fp8
-    max_model_len: 16384        # Keep conservative for 96 GB headroom
-    gpu_memory_util: 0.95
-    tensor_parallel: 1
+    topology: dense
