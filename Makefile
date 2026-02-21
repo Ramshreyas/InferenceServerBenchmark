@@ -21,6 +21,7 @@
 #
 # UTILITIES
 # ─────────────────────────────────────────────────────────────────────────────
+#   make prefetch                Download all models in models.yaml to HF cache
 #   make logs                    Tail vLLM server logs
 #   make status                  Show containers + GPU state
 #   make stop                    Stop all containers
@@ -96,7 +97,10 @@ results:
 gpu-monitor:
 	$(DC) --profile monitoring run --rm nvitop
 
+prefetch:
+	$(PYTHON) core/prefetch.py
+
 .PHONY: \
 	sweep kv-analysis sanity serve \
 	bench-sanity bench-context-sweep bench-kv-analysis \
-	logs status stop results gpu-monitor
+	logs status stop results gpu-monitor prefetch
