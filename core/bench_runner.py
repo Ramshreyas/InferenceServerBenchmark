@@ -90,12 +90,16 @@ class BenchmarkRunner:
             tokens = []
             
             for chunk in response:
-                if chunk.choices[0].delta.content:
+                delta = chunk.choices[0].delta
+                # Accept tokens from either content (standard) or reasoning_content
+                # (reasoning/thinking models such as gpt-oss-120b, DeepSeek-R1, QwQ)
+                text = delta.content or getattr(delta, 'reasoning_content', None)
+                if text:
                     token_time = time.perf_counter()
                     if first_token_time is None:
                         first_token_time = token_time
                     token_times.append(token_time)
-                    tokens.append(chunk.choices[0].delta.content)
+                    tokens.append(text)
             
             end_time = time.perf_counter()
             
