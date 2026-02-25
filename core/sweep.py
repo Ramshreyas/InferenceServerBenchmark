@@ -42,11 +42,18 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
     quant_flag = f"--quantization {quant}" if quant != "none" else ""
     prefix_flag = "--enable-prefix-caching" if enable_prefix_caching else ""
 
+    # max_model_len=0 or "auto" → omit flag, let vLLM auto-cap from gpu_memory_util
+    max_len = model.get("max_model_len", 32768)
+    if max_len and str(max_len) != "auto":
+        max_len_flag = f"--max-model-len {max_len}"
+    else:
+        max_len_flag = ""
+
     lines = [
         f"MODEL_NAME={model['name']}",
         f"TENSOR_PARALLEL={model.get('tensor_parallel', 1)}",
         f"GPU_MEMORY_UTIL={model.get('gpu_memory_util', 0.92)}",
-        f"MAX_MODEL_LEN={model.get('max_model_len', 32768)}",
+        f"MAX_MODEL_LEN_FLAG={max_len_flag}",
         f"QUANTIZATION_FLAG={quant_flag}",
         f"ENABLE_PREFIX_CACHING_FLAG={prefix_flag}",
     ]
@@ -60,6 +67,19 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
     for line in lines:
         print(f"  {line}")
     print()
+
+
+def probe_max_model_len(host: str = "localhost", port: int = 8000) -> int | None:
+    """Query vLLM for the max_model_len it actually started with."""
+    import json
+    url = f"http://{host}:{port}/v1/models"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read())
+            return int(data["data"][0].get("max_model_len", 0)) or None
+    except Exception as e:
+        print(f"WARNING: Could not probe max_model_len: {e}")
+        return None
 
 
 def run(cmd: list, check: bool = True, **kwargs) -> subprocess.CompletedProcess:
@@ -120,6 +140,11 @@ def main():
         help="Only serve the model — skip the benchmark (useful for manual bench runs)",
     )
     parser.add_argument(
+        "--probe", action="store_true",
+        help="Start each model without --max-model-len and print the auto-detected value. "
+             "Use this once to find correct max_model_len values for models.yaml.",
+    )
+    parser.add_argument(
         "--models-file", default="models.yaml",
         help="Path to models YAML file (default: models.yaml)",
     )
@@ -129,8 +154,8 @@ def main():
     )
     args = parser.parse_args()
 
-    if not args.serve_only and not args.bench:
-        parser.error("--bench is required unless --serve-only is set")
+    if not args.serve_only and not args.bench and not args.probe:
+        parser.error("--bench or --probe is required unless --serve-only is set")
 
     models = load_models(args.models_file)
 
@@ -148,6 +173,36 @@ def main():
         section(f"SERVE: {models[0]['name']}  (label={label})")
         serve_model(models[0], enable_prefix_caching=True)
         print("Server is ready. Run `make bench-<name>` to benchmark against it.")
+        return
+
+    # ── Probe mode: auto-detect max_model_len for each model ─────────────────
+    if args.probe:
+        section(f"PROBE  |  {len(models)} model(s)")
+        print("Starting each model WITHOUT --max-model-len so vLLM auto-caps from gpu_memory_util.\n")
+        suggestions = []
+        for i, model in enumerate(models, 1):
+            label = model.get("label", model["name"].split("/")[-1])
+            print(f"\n[{i}/{len(models)}] Probing: {model['name']}  (label={label})")
+            # Temporarily override max_model_len to 0 → write_env omits the flag
+            probe_model = {**model, "max_model_len": 0}
+            try:
+                serve_model(probe_model, enable_prefix_caching=False)
+                detected = probe_max_model_len()
+                if detected:
+                    suggestions.append((label, model["name"], detected))
+                    print(f"  → Detected max_model_len: {detected:,}")
+                else:
+                    print(f"  → Could not detect max_model_len")
+            except Exception as e:
+                print(f"  *** FAILED {label}: {e}", file=sys.stderr)
+            finally:
+                run(["docker", "compose", "down"], check=False)
+
+        section("PROBE RESULTS — paste into models.yaml")
+        for label, name, detected in suggestions:
+            print(f"  {label} ({name})")
+            print(f"    max_model_len: {detected}")
+            print()
         return
 
     section(f"SWEEP: {args.bench}  |  {len(models)} model(s)")

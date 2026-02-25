@@ -51,8 +51,8 @@ models:
   - name: Qwen/Qwen3-Next-80B-A3B-Thinking
     label: qwen3-next-80b-thinking
     quantization: fp8           # BF16 ~160 GB – FP8 brings it to ~80 GB; fits with tight headroom
-    max_model_len: 16384        # ~16 GB KV headroom → covers 8k/16k sweep points only
-    gpu_memory_util: 0.95
+    max_model_len: 8192         # Conservative: OOM at 16384 with 0.95 util; reduced headroom
+    gpu_memory_util: 0.90
     tensor_parallel: 1
     topology: sparse_moe        # 80B total weights, 3B active per forward pass
 
@@ -69,8 +69,8 @@ models:
   - name: Qwen/QwQ-32B
     label: qwq-32b
     quantization: fp8           # FP8 ~33 GB loaded
-    max_model_len: 65536        # ~63 GB KV headroom → covers 8k/32k/65k sweep points
-    gpu_memory_util: 0.90
+    max_model_len: 32768        # Reduced from 65536 — OOM on KV cache allocation
+    gpu_memory_util: 0.85
     tensor_parallel: 1
     topology: dense
 
@@ -87,8 +87,8 @@ models:
   - name: Qwen/Qwen3-8B
     label: qwen3-8b
     quantization: none          # BF16 ~16 GB loaded
-    max_model_len: 131072       # ~80 GB KV headroom → covers all sweep points incl. 131k
-    gpu_memory_util: 0.90
+    max_model_len: 65536        # Reduced from 131072 — OOM on KV cache allocation
+    gpu_memory_util: 0.85
     tensor_parallel: 1
     topology: dense
 
@@ -103,7 +103,7 @@ models:
   - name: mistralai/Mistral-7B-Instruct-v0.3
     label: mistral-7b
     quantization: none          # BF16 ~15 GB loaded
-    max_model_len: 131072       # ~81 GB KV headroom → covers all sweep points incl. 131k
-    gpu_memory_util: 0.90
+    max_model_len: 65536        # Reduced from 131072 — OOM on KV cache allocation
+    gpu_memory_util: 0.85
     tensor_parallel: 1
     topology: dense

@@ -11,6 +11,8 @@
 #   make kv-analysis             KV cache analysis (prefix caching on & off)
 #   make sanity                  Quick 10-request check across all models
 #   make sanity LABEL=mistral-7b Quick check for one specific model
+#   make probe                   Auto-detect max_model_len for ALL models (no flag → vLLM auto-caps)
+#   make probe LABEL=qwen3-8b    Auto-detect for one model
 #
 # ONE-OFF / MANUAL
 # ─────────────────────────────────────────────────────────────────────────────
@@ -45,6 +47,10 @@ kv-analysis:
 
 sanity:
 	$(PYTHON) core/sweep.py --bench sanity $(if $(LABEL),--label $(LABEL),)
+
+# Probe: auto-detect actual max_model_len for each model (no --max-model-len passed to vLLM)
+probe:
+	$(PYTHON) core/sweep.py --probe $(if $(LABEL),--label $(LABEL),)
 
 # Boot a single model without running a benchmark (useful for exploratory runs)
 serve:

@@ -21,7 +21,7 @@ services:
       --model ${MODEL_NAME:-mistralai/Mistral-7B-Instruct-v0.3}
       --tensor-parallel-size ${TENSOR_PARALLEL:-1}
       --gpu-memory-utilization ${GPU_MEMORY_UTIL:-0.92}
-      --max-model-len ${MAX_MODEL_LEN:-32768}
+      ${MAX_MODEL_LEN_FLAG:-}
       ${QUANTIZATION_FLAG:-}
       ${ENABLE_PREFIX_CACHING_FLAG:---enable-prefix-caching}
       --trust-remote-code

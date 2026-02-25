@@ -194,11 +194,25 @@ class BenchmarkRunner:
         # Wait for vLLM server to be ready
         self.logger.info("Waiting for vLLM server...")
         self._wait_for_server()
-        
+
+        # Discover what context lengths the server can actually handle
+        server_max_len = self._get_server_max_model_len()
+        all_context_lengths = self.config.get('context_lengths', [8192])
+        context_lengths = [c for c in all_context_lengths if c <= server_max_len]
+        skipped = [c for c in all_context_lengths if c > server_max_len]
+        if skipped:
+            self.logger.warning(
+                f"Skipping context lengths {skipped} — exceed server max_model_len ({server_max_len:,}). "
+                f"Update max_model_len in models.yaml to include them."
+            )
+        if not context_lengths:
+            raise ValueError(
+                f"All configured context lengths {all_context_lengths} exceed "
+                f"server max_model_len ({server_max_len:,}). Reduce context_lengths or raise max_model_len."
+            )
+
         all_results = []
-        
-        # Run benchmark for each context length
-        context_lengths = self.config.get('context_lengths', [8192])
+
         for ctx_len in context_lengths:
             results = self._run_benchmark_sweep(ctx_len)
             all_results.extend(results)
@@ -214,13 +228,28 @@ class BenchmarkRunner:
         start = time.time()
         while time.time() - start < timeout:
             try:
-                # Try a simple request
                 self.client.models.list()
                 self.logger.info("✓ vLLM server is ready")
                 return
             except Exception:
                 time.sleep(5)
         raise TimeoutError("vLLM server did not become ready in time")
+
+    def _get_server_max_model_len(self) -> int:
+        """Query the actual max_model_len vLLM was started with via /v1/models."""
+        import urllib.request as _req
+        endpoint = os.getenv('VLLM_ENDPOINT', 'http://localhost:8000/v1')
+        base = endpoint.rstrip('/').removesuffix('/v1')
+        try:
+            with _req.urlopen(f"{base}/v1/models", timeout=10) as resp:
+                import json as _json
+                data = _json.loads(resp.read())
+                max_len = int(data['data'][0].get('max_model_len', 2 ** 31))
+                self.logger.info(f"Server max_model_len: {max_len:,} tokens")
+                return max_len
+        except Exception as e:
+            self.logger.warning(f"Could not query server max_model_len: {e} — using config values as-is")
+            return 2 ** 31
     
     def _save_results(self, results: List[Dict]):
         """Save benchmark results to JSON and CSV."""
