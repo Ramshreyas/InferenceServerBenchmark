@@ -144,7 +144,7 @@ def probe_max_model_len(host: str = "localhost", port: int = 8000) -> int | None
 
 
 def run(cmd: list, check: bool = True, **kwargs) -> subprocess.CompletedProcess:
-    print(f">>> {' '.join(cmd)}")
+    print(f">>> {' '.join(cmd)}", flush=True)
     return subprocess.run(cmd, check=check, **kwargs)
 
 
@@ -179,9 +179,9 @@ def run_bench(bench_key: str):
 
 
 def section(title: str):
-    print(f"\n{'='*60}")
-    print(f"  {title}")
-    print(f"{'='*60}\n")
+    print(f"\n{'='*60}", flush=True)
+    print(f"  {title}", flush=True)
+    print(f"{'='*60}\n", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -453,6 +453,7 @@ def main():
         print(f"WARNING: {len(failed)} model(s) failed and were skipped:")
         for f in failed:
             print(f"  - {f}")
+    sys.stdout.flush()
     return
 
 
