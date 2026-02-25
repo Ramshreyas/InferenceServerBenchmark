@@ -42,8 +42,8 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
     quant_flag = f"--quantization {quant}" if quant != "none" else ""
     prefix_flag = "--enable-prefix-caching" if enable_prefix_caching else ""
 
-    # max_model_len=0 or "auto" → omit flag, let vLLM auto-cap from gpu_memory_util
-    max_len = model.get("max_model_len", 32768)
+    # max_model_len absent/0/"auto" → omit flag, let vLLM auto-cap from gpu_memory_util
+    max_len = model.get("max_model_len", 0)
     if max_len and str(max_len) != "auto":
         max_len_flag = f"--max-model-len {max_len}"
     else:
