@@ -73,6 +73,12 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
         f"MAX_MODEL_LEN_FLAG={max_len_flag}",
         f"QUANTIZATION_FLAG={quant_flag}",
         f"ENABLE_PREFIX_CACHING_FLAG={prefix_flag}",
+        # Placeholders so docker compose doesn't warn about unset vars
+        "SMALL_MODEL_NAME=",
+        "SMALL_TENSOR_PARALLEL=1",
+        "SMALL_GPU_MEMORY_UTIL=0.50",
+        "SMALL_MAX_MODEL_LEN_FLAG=",
+        "SMALL_QUANTIZATION_FLAG=",
     ]
     if hf_token:
         lines.append(f"HF_TOKEN={hf_token}")
@@ -159,7 +165,7 @@ def wait_for_vllm(host: str = "localhost", port: int = 8000, timeout: int = 600)
 def serve_model(model: dict, enable_prefix_caching: bool = True):
     hf_token = os.environ.get("HF_TOKEN")
     write_env(model, enable_prefix_caching=enable_prefix_caching, hf_token=hf_token)
-    run(["docker", "compose", "down"])
+    run(["docker", "compose", "down", "--remove-orphans"])
     run(["docker", "compose", "up", "-d", "vllm-large"])
     wait_for_vllm(timeout=1800)  # large models can take 15-30 min to load on first run
 
@@ -281,7 +287,7 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
         section(f"CO-DEPLOY: {lg_label} ({lg_util:.0%}) + {sm_label} ({sm_util:.0%})")
 
         write_env_dual(lg, sm, lg_util=lg_util, sm_util=sm_util, hf_token=hf_token)
-        run(["docker", "compose", "down"])
+        run(["docker", "compose", "down", "--remove-orphans"])
         run(["docker", "compose", "--profile", "co-deploy", "up", "-d", "vllm-large", "vllm-small"])
 
         try:
@@ -290,7 +296,7 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
         except TimeoutError as e:
             print(f"  *** TIMEOUT: {e}", file=sys.stderr)
             failed.append(f"{lg_label}+{sm_label}")
-            run(["docker", "compose", "down"], check=False)
+            run(["docker", "compose", "down", "--remove-orphans"], check=False)
             continue
 
         try:
@@ -304,7 +310,7 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
             print(f"  *** BENCH FAILED: {e}", file=sys.stderr)
             failed.append(f"{lg_label}+{sm_label}")
         finally:
-            run(["docker", "compose", "down"], check=False)
+            run(["docker", "compose", "down", "--remove-orphans"], check=False)
 
     section("CO-DEPLOY SWEEP COMPLETE")
     if failed:
@@ -398,7 +404,7 @@ def main():
             except Exception as e:
                 print(f"  *** FAILED {label}: {e}", file=sys.stderr)
             finally:
-                run(["docker", "compose", "down"], check=False)
+                run(["docker", "compose", "down", "--remove-orphans"], check=False)
 
         section("PROBE RESULTS — paste into models.yaml")
         for label, name, detected in suggestions:
@@ -438,6 +444,9 @@ def main():
         except Exception as e:
             print(f"  *** FAILED bench for {label}: {e} — skipping", file=sys.stderr)
             failed.append(label)
+
+    # Final cleanup
+    run(["docker", "compose", "down", "--remove-orphans"], check=False)
 
     section(f"SWEEP COMPLETE: {bench_key}")
     if failed:
