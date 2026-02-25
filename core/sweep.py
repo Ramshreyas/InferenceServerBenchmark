@@ -340,17 +340,30 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
             print(f">>> {lg_label} + {sm_label} already running — reusing containers", flush=True)
         else:
             compose_down_all()
-            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large", "vllm-small"])
 
+            # Start models SEQUENTIALLY to avoid GPU memory allocation race.
+            # If both vLLM instances call torch.cuda.mem_get_info() at the same
+            # time, they both see all 96 GB free and both try to over-allocate.
+            print(">>> Starting vllm-large first (sequential to avoid memory race)…", flush=True)
+            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large"])
             try:
                 wait_for_vllm(port=8000, timeout=1800)
+            except TimeoutError as e:
+                print(f"  *** TIMEOUT (vllm-large): {e}", file=sys.stderr)
+                print("  --- vllm-large logs (last 80 lines) ---", flush=True)
+                run(["docker", "logs", "--tail", "80", "vllm-large"], check=False)
+                failed.append(f"{lg_label}+{sm_label}")
+                compose_down_all(check=False)
+                continue
+
+            print(">>> vllm-large healthy — now starting vllm-small…", flush=True)
+            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-small"])
+            try:
                 wait_for_vllm(port=8001, timeout=1800)
             except TimeoutError as e:
-                print(f"  *** TIMEOUT: {e}", file=sys.stderr)
-                print("  --- vllm-large logs (last 60 lines) ---", flush=True)
-                run(["docker", "logs", "--tail", "60", "vllm-large"], check=False)
-                print("  --- vllm-small logs (last 60 lines) ---", flush=True)
-                run(["docker", "logs", "--tail", "60", "vllm-small"], check=False)
+                print(f"  *** TIMEOUT (vllm-small): {e}", file=sys.stderr)
+                print("  --- vllm-small logs (last 80 lines) ---", flush=True)
+                run(["docker", "logs", "--tail", "80", "vllm-small"], check=False)
                 failed.append(f"{lg_label}+{sm_label}")
                 compose_down_all(check=False)
                 continue
