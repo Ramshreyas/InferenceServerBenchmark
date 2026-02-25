@@ -148,11 +148,12 @@ def run(cmd: list, check: bool = True, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=check, **kwargs)
 
 
-def compose_up(args: list[str], retries: int = 3, delay: float = 3.0):
+def compose_up(args: list[str], retries: int = 3, delay: float = 5.0):
     """Run 'docker compose ... up' with retries to handle Docker network race conditions.
 
     After 'docker compose down' removes the network, Docker may still reference
-    the stale network ID internally.  A short sleep + retry resolves this.
+    the stale network ID internally.  Between retries we tear down containers,
+    prune dangling networks, and sleep to let the daemon fully reconcile.
     """
     cmd = ["docker", "compose"] + args
     for attempt in range(1, retries + 1):
@@ -160,8 +161,10 @@ def compose_up(args: list[str], retries: int = 3, delay: float = 3.0):
         if result.returncode == 0:
             return
         print(f">>> compose up failed (attempt {attempt}/{retries}), retrying in {delay}s …", flush=True)
-        # Tear down any half-created resources before retrying
+        # Tear down any half-created resources
         run(["docker", "compose", "down", "--remove-orphans"], check=False)
+        # Prune dangling / stale networks that Docker failed to clean up
+        run(["docker", "network", "prune", "-f"], check=False)
         time.sleep(delay)
     # Final attempt — let it raise on failure
     run(cmd, check=True)
