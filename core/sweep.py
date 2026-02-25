@@ -162,8 +162,28 @@ def wait_for_vllm(host: str = "localhost", port: int = 8000, timeout: int = 600)
     raise TimeoutError(f"vLLM did not become ready within {timeout}s")
 
 
+def _get_running_model(port: int = 8000) -> str | None:
+    """Return the model name currently served by vLLM, or None if unreachable."""
+    url = f"http://localhost:{port}/v1/models"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+            return data["data"][0]["id"]
+    except Exception:
+        return None
+
+
 def serve_model(model: dict, enable_prefix_caching: bool = True):
     hf_token = os.environ.get("HF_TOKEN")
+    wanted = model["name"]
+
+    # Skip teardown if the same model is already healthy on port 8000
+    running = _get_running_model(port=8000)
+    if running == wanted:
+        print(f">>> {wanted} is already running — reusing container", flush=True)
+        write_env(model, enable_prefix_caching=enable_prefix_caching, hf_token=hf_token)
+        return
+
     write_env(model, enable_prefix_caching=enable_prefix_caching, hf_token=hf_token)
     run(["docker", "compose", "down", "--remove-orphans"])
     run(["docker", "compose", "up", "-d", "vllm-large"])
@@ -287,17 +307,24 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
         section(f"CO-DEPLOY: {lg_label} ({lg_util:.0%}) + {sm_label} ({sm_util:.0%})")
 
         write_env_dual(lg, sm, lg_util=lg_util, sm_util=sm_util, hf_token=hf_token)
-        run(["docker", "compose", "down", "--remove-orphans"])
-        run(["docker", "compose", "--profile", "co-deploy", "up", "-d", "vllm-large", "vllm-small"])
 
-        try:
-            wait_for_vllm(port=8000, timeout=1800)
-            wait_for_vllm(port=8001, timeout=1800)
-        except TimeoutError as e:
-            print(f"  *** TIMEOUT: {e}", file=sys.stderr)
-            failed.append(f"{lg_label}+{sm_label}")
-            run(["docker", "compose", "down", "--remove-orphans"], check=False)
-            continue
+        # Skip teardown if both models are already running on correct ports
+        running_lg = _get_running_model(port=8000)
+        running_sm = _get_running_model(port=8001)
+        if running_lg == lg["name"] and running_sm == sm["name"]:
+            print(f">>> {lg_label} + {sm_label} already running — reusing containers", flush=True)
+        else:
+            run(["docker", "compose", "down", "--remove-orphans"])
+            run(["docker", "compose", "--profile", "co-deploy", "up", "-d", "vllm-large", "vllm-small"])
+
+            try:
+                wait_for_vllm(port=8000, timeout=1800)
+                wait_for_vllm(port=8001, timeout=1800)
+            except TimeoutError as e:
+                print(f"  *** TIMEOUT: {e}", file=sys.stderr)
+                failed.append(f"{lg_label}+{sm_label}")
+                run(["docker", "compose", "down", "--remove-orphans"], check=False)
+                continue
 
         try:
             run([
