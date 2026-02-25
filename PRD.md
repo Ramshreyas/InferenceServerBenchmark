@@ -145,22 +145,27 @@ The winning pair is the one with the best P95 TTFT on the large endpoint at the 
 
 ## 6. Implementation Specification
 
-### 6.1 `models.yaml` — add `role` field
+### 6.1 `models.yaml` — add `role` and `loaded_gb` fields
 
-Every model entry gets a `role` field:
+Every model entry gets a `role` field and a `loaded_gb` field:
 
 ```yaml
-role: large   # large | small
+role: large        # large | small
+loaded_gb: 60      # approximate VRAM when loaded (weights + overhead)
 ```
 
-- `large`: considered for the primary endpoint in co-deploy (port 8000).
-- `small`: considered for the secondary endpoint in co-deploy (port 8001).
+- `role: large`: considered for the primary endpoint in co-deploy (port 8000).
+- `role: small`: considered for the secondary endpoint in co-deploy (port 8001).
+- `loaded_gb`: approximate VRAM footprint in GB when the model is loaded. Used by `sweep.py` to auto-compute proportional `gpu_memory_util` splits for co-deploy pairs. The `gpu_memory_util` field in each model entry is used only for solo benchmarks.
 
-The co-deploy sweep generates all `(large, small)` pairs where:
+**Co-deploy memory allocation:** `sweep.py` computes proportional splits from `loaded_gb`:
 ```
-large.gpu_memory_util + small.gpu_memory_util <= 0.95
+total_budget = 0.92   (leave 8% for CUDA context / driver overhead)
+headroom     = 1.15   (15% over loaded_gb for KV cache / activations)
+large_util   = total_budget × (large.loaded_gb / (large.loaded_gb + small.loaded_gb))
+small_util   = total_budget × (small.loaded_gb / (large.loaded_gb + small.loaded_gb))
 ```
-Any pair exceeding 95% total utilization is skipped with a warning. This check is performed in `sweep.py` before starting any containers.
+Pairs where `(large.loaded_gb + small.loaded_gb) × headroom > GPU_VRAM × total_budget` are skipped automatically.
 
 ---
 

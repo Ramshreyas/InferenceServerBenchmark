@@ -86,8 +86,12 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
     print()
 
 
-def write_env_dual(large: dict, small: dict, hf_token: str | None = None):
-    """Write .env for a co-deploy run (two models on one GPU)."""
+def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: float = 0.30, hf_token: str | None = None):
+    """Write .env for a co-deploy run (two models on one GPU).
+    
+    lg_util / sm_util are the auto-computed gpu_memory_util values from
+    compute_co_deploy_memory(), NOT the solo gpu_memory_util from models.yaml.
+    """
     lg_quant = large.get("quantization", "none")
     sm_quant = small.get("quantization", "none")
 
@@ -98,14 +102,14 @@ def write_env_dual(large: dict, small: dict, hf_token: str | None = None):
         # ── Large model (vllm-large, port 8000) ──
         f"MODEL_NAME={large['name']}",
         f"TENSOR_PARALLEL={large.get('tensor_parallel', 1)}",
-        f"GPU_MEMORY_UTIL={large.get('gpu_memory_util', 0.60)}",
+        f"GPU_MEMORY_UTIL={lg_util}",
         f"MAX_MODEL_LEN_FLAG={f'--max-model-len {lg_max}' if lg_max and str(lg_max) != 'auto' else ''}",
         f"QUANTIZATION_FLAG={f'--quantization {lg_quant}' if lg_quant != 'none' else ''}",
         f"ENABLE_PREFIX_CACHING_FLAG=--enable-prefix-caching",
         # ── Small model (vllm-small, port 8001) ──
         f"SMALL_MODEL_NAME={small['name']}",
         f"SMALL_TENSOR_PARALLEL={small.get('tensor_parallel', 1)}",
-        f"SMALL_GPU_MEMORY_UTIL={small.get('gpu_memory_util', 0.30)}",
+        f"SMALL_GPU_MEMORY_UTIL={sm_util}",
         f"SMALL_MAX_MODEL_LEN_FLAG={f'--max-model-len {sm_max}' if sm_max and str(sm_max) != 'auto' else ''}",
         f"SMALL_QUANTIZATION_FLAG={f'--quantization {sm_quant}' if sm_quant != 'none' else ''}",
     ]
@@ -198,6 +202,39 @@ def context_window_check(model: dict, bench_key: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Co-deploy memory allocation
+# ---------------------------------------------------------------------------
+
+GPU_VRAM_GB = 96.0
+CO_DEPLOY_TOTAL_BUDGET = 0.92   # leave 8% for CUDA context / driver overhead
+CO_DEPLOY_HEADROOM = 1.15       # 15% headroom over loaded_gb for KV cache / activations
+
+def compute_co_deploy_memory(large: dict, small: dict) -> tuple[float | None, float | None]:
+    """Return (large_util, small_util) proportional to loaded_gb, or (None, None) if pair cannot fit."""
+    lg_gb = large.get("loaded_gb", 0)
+    sm_gb = small.get("loaded_gb", 0)
+    if not lg_gb or not sm_gb:
+        print(
+            f"WARNING: missing loaded_gb for {large.get('label')} or {small.get('label')} — skipping pair"
+        )
+        return None, None
+
+    # Estimated VRAM required (weights + KV headroom)
+    lg_needed = lg_gb * CO_DEPLOY_HEADROOM
+    sm_needed = sm_gb * CO_DEPLOY_HEADROOM
+    total_needed = lg_needed + sm_needed
+
+    if total_needed > GPU_VRAM_GB * CO_DEPLOY_TOTAL_BUDGET:
+        return None, None  # won't physically fit
+
+    # Proportional split within the total budget
+    ratio = lg_needed / total_needed
+    lg_util = round(CO_DEPLOY_TOTAL_BUDGET * ratio, 2)
+    sm_util = round(CO_DEPLOY_TOTAL_BUDGET * (1 - ratio), 2)
+    return lg_util, sm_util
+
+
+# ---------------------------------------------------------------------------
 # Co-deploy sweep  (Goal 2)
 # ---------------------------------------------------------------------------
 
@@ -217,32 +254,33 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
         print("ERROR: No 'small' role models found (or label filter matched nothing).", file=sys.stderr)
         sys.exit(1)
 
-    # Build viable pairs (combined gpu_memory_util ≤ 0.95)
-    pairs = []
+    # Build viable pairs — auto-compute memory splits from loaded_gb
+    pairs: list[tuple[dict, dict, float, float]] = []
     for lg, sm in product(large_pool, small_pool):
-        combined = lg.get("gpu_memory_util", 0.60) + sm.get("gpu_memory_util", 0.30)
-        if combined <= 0.95:
-            pairs.append((lg, sm))
-        else:
+        lg_util, sm_util = compute_co_deploy_memory(lg, sm)
+        if lg_util is None:
             print(
                 f"SKIP: {lg.get('label')} + {sm.get('label')} — "
-                f"combined gpu_memory_util {combined:.2f} > 0.95"
+                f"combined VRAM estimate ({lg.get('loaded_gb', '?')}+{sm.get('loaded_gb', '?')} GB) "
+                f"exceeds budget ({GPU_VRAM_GB * CO_DEPLOY_TOTAL_BUDGET:.0f} GB)"
             )
+        else:
+            pairs.append((lg, sm, lg_util, sm_util))
 
     if not pairs:
-        print("ERROR: No viable (large, small) pair with combined gpu_memory_util ≤ 0.95.", file=sys.stderr)
+        print("ERROR: No viable (large, small) pair fits in VRAM.", file=sys.stderr)
         sys.exit(1)
 
     section(f"CO-DEPLOY SWEEP  |  {len(pairs)} pair(s)")
     hf_token = os.environ.get("HF_TOKEN")
     failed = []
 
-    for lg, sm in pairs:
+    for lg, sm, lg_util, sm_util in pairs:
         lg_label = lg.get("label", lg["name"].split("/")[-1])
         sm_label = sm.get("label", sm["name"].split("/")[-1])
-        section(f"CO-DEPLOY: {lg_label} + {sm_label}")
+        section(f"CO-DEPLOY: {lg_label} ({lg_util:.0%}) + {sm_label} ({sm_util:.0%})")
 
-        write_env_dual(lg, sm, hf_token=hf_token)
+        write_env_dual(lg, sm, lg_util=lg_util, sm_util=sm_util, hf_token=hf_token)
         run(["docker", "compose", "down"])
         run(["docker", "compose", "--profile", "co-deploy", "up", "-d", "vllm-large", "vllm-small"])
 
