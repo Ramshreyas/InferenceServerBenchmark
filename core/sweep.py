@@ -347,6 +347,10 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
                 wait_for_vllm(port=8001, timeout=1800)
             except TimeoutError as e:
                 print(f"  *** TIMEOUT: {e}", file=sys.stderr)
+                print("  --- vllm-large logs (last 60 lines) ---", flush=True)
+                run(["docker", "logs", "--tail", "60", "vllm-large"], check=False)
+                print("  --- vllm-small logs (last 60 lines) ---", flush=True)
+                run(["docker", "logs", "--tail", "60", "vllm-small"], check=False)
                 failed.append(f"{lg_label}+{sm_label}")
                 compose_down_all(check=False)
                 continue
