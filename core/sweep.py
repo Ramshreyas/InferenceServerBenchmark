@@ -148,6 +148,25 @@ def run(cmd: list, check: bool = True, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=check, **kwargs)
 
 
+def compose_up(args: list[str], retries: int = 3, delay: float = 3.0):
+    """Run 'docker compose ... up' with retries to handle Docker network race conditions.
+
+    After 'docker compose down' removes the network, Docker may still reference
+    the stale network ID internally.  A short sleep + retry resolves this.
+    """
+    cmd = ["docker", "compose"] + args
+    for attempt in range(1, retries + 1):
+        result = run(cmd, check=False)
+        if result.returncode == 0:
+            return
+        print(f">>> compose up failed (attempt {attempt}/{retries}), retrying in {delay}s …", flush=True)
+        # Tear down any half-created resources before retrying
+        run(["docker", "compose", "down", "--remove-orphans"], check=False)
+        time.sleep(delay)
+    # Final attempt — let it raise on failure
+    run(cmd, check=True)
+
+
 def wait_for_vllm(host: str = "localhost", port: int = 8000, timeout: int = 600):
     url = f"http://{host}:{port}/health"
     deadline = time.time() + timeout
@@ -186,7 +205,7 @@ def serve_model(model: dict, enable_prefix_caching: bool = True):
 
     write_env(model, enable_prefix_caching=enable_prefix_caching, hf_token=hf_token)
     run(["docker", "compose", "down", "--remove-orphans"])
-    run(["docker", "compose", "up", "-d", "vllm-large"])
+    compose_up(["up", "-d", "vllm-large"])
     wait_for_vllm(timeout=1800)  # large models can take 15-30 min to load on first run
 
 
@@ -315,7 +334,7 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
             print(f">>> {lg_label} + {sm_label} already running — reusing containers", flush=True)
         else:
             run(["docker", "compose", "down", "--remove-orphans"])
-            run(["docker", "compose", "--profile", "co-deploy", "up", "-d", "vllm-large", "vllm-small"])
+            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large", "vllm-small"])
 
             try:
                 wait_for_vllm(port=8000, timeout=1800)
