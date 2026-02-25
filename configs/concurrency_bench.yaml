@@ -1,0 +1,33 @@
+# =============================================================================
+# Goal 1 — Single-Tenant Concurrency Benchmark
+# =============================================================================
+# Find which model has the best P95 TTFT and ITL under constant 10-user
+# pressure.  Sweeps a 2-D grid of prompt × output token lengths.
+#
+# See PRD §4.2 for design rationale.
+# =============================================================================
+
+benchmark:
+  name: "Concurrency Benchmark"
+  description: "10-user sustained concurrency sweep across prompt × output token lengths"
+  output_prefix: "concurrency_bench"
+
+model:
+  name: "auto"  # Auto-detected from the running vLLM server
+
+# 2-D sweep grid — each (prompt, output) pair that fits in max_model_len is run
+prompt_token_lengths: [512, 4096, 16384]
+output_token_lengths: [256, 512, 1024, 2048, 4096]
+
+requests:
+  num_requests: 200        # Per sweep point — required for stable P95/P99
+  concurrency: 10          # Fixed queue depth; ThreadPoolExecutor, not Poisson
+  system_prompt: |
+    You are a helpful AI assistant.
+
+telemetry:
+  sample_interval_sec: 2.0
+  collect_gpu_stats: true
+  collect_power_draw: false
+  collect_temperature: false
+  collect_memory_clock: false

@@ -5,48 +5,57 @@
 # PRIMARY WORKFLOW
 # ─────────────────────────────────────────────────────────────────────────────
 #  1. Edit models.yaml — the only file you need to touch.
-#  2. Run one of the sweep targets below.
+#  2. Run one of the targets below.
 #
-#   make sweep                   Context window sweep across ALL models
-#   make kv-analysis             KV cache analysis (prefix caching on & off)
-#   make sanity                  Quick 10-request check across all models
-#   make sanity LABEL=mistral-7b Quick check for one specific model
-#   make probe                   Auto-detect max_model_len for ALL models (no flag → vLLM auto-caps)
-#   make probe LABEL=qwen3-8b    Auto-detect for one model
+#   make sanity LABEL=mistral-7b          Quick 10-request smoke test
+#   make context-stress                   Context fitness check (all models)
+#   make context-stress LABEL=qwq-32b     Context fitness check (one model)
+#   make concurrency-bench                Goal 1 — rank single-tenant models
+#   make concurrency-bench LABEL=qwq-32b  Goal 1 — one model
+#   make co-deploy                        Goal 2 — all viable (large, small) pairs
+#   make co-deploy LABEL_LARGE=gpt-oss-120b LABEL_SMALL=qwen3-8b  # one pair
+#   make probe                            Auto-detect max_model_len for all models
+#   make probe LABEL=qwen3-8b             Auto-detect for one model
 #
 # ONE-OFF / MANUAL
 # ─────────────────────────────────────────────────────────────────────────────
-#   make serve LABEL=mistral-7b  Boot vLLM for one model (then bench manually)
-#   make bench-sanity            Run sanity bench against whatever is up
-#   make bench-context-sweep     Run context sweep against whatever is up
-#   make bench-kv-analysis       Run KV cache bench against whatever is up
+#   make serve LABEL=mistral-7b    Boot vLLM for one model (then bench manually)
+#   make bench-sanity              Run sanity bench against whatever is up
+#   make bench-concurrency         Run concurrency bench against whatever is up
 #
 # UTILITIES
 # ─────────────────────────────────────────────────────────────────────────────
-#   make prefetch                Download all models in models.yaml to HF cache
-#   make logs                    Tail vLLM server logs
-#   make status                  Show containers + GPU state
-#   make stop                    Stop all containers
-#   make results                 List result files (most recent first)
-#   make gpu-monitor             One-shot GPU snapshot
+#   make prefetch                  Download all models in models.yaml to HF cache
+#   make logs                      Tail vLLM server logs
+#   make status                    Show containers + GPU state
+#   make stop                      Stop all containers
+#   make results                   List result files (most recent first)
+#   make gpu-monitor               One-shot GPU snapshot
 # ==============================================================================
 
-DC       := docker compose
-PYTHON   := python3
-LABEL    ?=   # optional: filter to a single model label from models.yaml
+DC           := docker compose
+PYTHON       := python3
+LABEL        ?=   # filter to a single model label (single-model benchmarks)
+LABEL_LARGE  ?=   # filter large-role model (co-deploy)
+LABEL_SMALL  ?=   # filter small-role model (co-deploy)
 
 # ==============================================================================
 # PRIMARY  —  models.yaml-driven sweeps
 # ==============================================================================
 
-sweep:
-	$(PYTHON) core/sweep.py --bench context-sweep $(if $(LABEL),--label $(LABEL),)
-
-kv-analysis:
-	$(PYTHON) core/sweep.py --bench kv-analysis $(if $(LABEL),--label $(LABEL),)
-
 sanity:
 	$(PYTHON) core/sweep.py --bench sanity $(if $(LABEL),--label $(LABEL),)
+
+context-stress:
+	$(PYTHON) core/sweep.py --bench context-stress $(if $(LABEL),--label $(LABEL),)
+
+concurrency-bench:
+	$(PYTHON) core/sweep.py --bench concurrency-bench $(if $(LABEL),--label $(LABEL),)
+
+co-deploy:
+	$(PYTHON) core/sweep.py --bench co-deploy \
+		$(if $(LABEL_LARGE),--label-large $(LABEL_LARGE),) \
+		$(if $(LABEL_SMALL),--label-small $(LABEL_SMALL),)
 
 # Probe: auto-detect actual max_model_len for each model (no --max-model-len passed to vLLM)
 probe:
@@ -69,20 +78,16 @@ bench-sanity:
 	$(DC) run --rm bench-runner \
 		python /app/core/bench_runner.py --config /configs/sanity_check.yaml
 
-bench-context-sweep:
+bench-concurrency:
 	$(DC) run --rm bench-runner \
-		python /app/core/bench_runner.py --config /configs/context_sweep.yaml
-
-bench-kv-analysis:
-	$(DC) run --rm bench-runner \
-		python /app/core/bench_runner.py --config /configs/kv_cache.yaml
+		python /app/core/bench_runner.py --config /configs/concurrency_bench.yaml
 
 # ==============================================================================
 # UTILITIES
 # ==============================================================================
 
 logs:
-	$(DC) logs -f vllm
+	$(DC) logs -f vllm-large
 
 status:
 	@echo "=== Containers ==="
@@ -107,6 +112,6 @@ prefetch:
 	$(PYTHON) core/prefetch.py
 
 .PHONY: \
-	sweep kv-analysis sanity serve \
-	bench-sanity bench-context-sweep bench-kv-analysis \
+	sanity context-stress concurrency-bench co-deploy probe serve \
+	bench-sanity bench-concurrency \
 	logs status stop results gpu-monitor prefetch

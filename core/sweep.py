@@ -3,17 +3,20 @@
 Sweep runner  —  reads models.yaml, serves each model, runs benchmarks.
 
 Run from repo root:
-    python core/sweep.py --bench context-sweep
-    python core/sweep.py --bench kv-analysis
+    python core/sweep.py --bench concurrency-bench
+    python core/sweep.py --bench context-stress --label qwq-32b
     python core/sweep.py --bench sanity --label mistral-7b
+    python core/sweep.py --bench co-deploy --label-large gpt-oss-120b --label-small qwen3-8b
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
 import time
 import urllib.request
+from itertools import product
 from pathlib import Path
 
 import yaml
@@ -22,9 +25,10 @@ import yaml
 # Benchmark config paths (inside bench-runner container)
 # ---------------------------------------------------------------------------
 BENCH_CONFIGS = {
-    "sanity":        "/configs/sanity_check.yaml",
-    "context-sweep": "/configs/context_sweep.yaml",
-    "kv-analysis":   "/configs/kv_cache.yaml",
+    "sanity":            "/configs/sanity_check.yaml",
+    "concurrency-bench": "/configs/concurrency_bench.yaml",
+    "context-stress":    "/configs/context_stress.yaml",
+    # co-deploy uses a separate code path (co_deploy_sweep)
 }
 
 # ---------------------------------------------------------------------------
@@ -37,12 +41,25 @@ def load_models(models_file: str = "models.yaml") -> list:
     return data["models"]
 
 
+def load_config(bench_key: str) -> dict:
+    """Load a benchmark config from the local configs/ directory."""
+    config_path = BENCH_CONFIGS[bench_key].replace("/configs/", "configs/")
+    with open(config_path) as f:
+        return yaml.safe_load(f)
+
+
+def _model_flag(key: str, value, prefix: str = "") -> str:
+    """Build a CLI flag string.  Returns '' if the value is falsy / 'none'."""
+    if not value or str(value) == "none":
+        return ""
+    return f"--{key} {value}"
+
+
 def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | None = None):
     quant = model.get("quantization", "none")
     quant_flag = f"--quantization {quant}" if quant != "none" else ""
     prefix_flag = "--enable-prefix-caching" if enable_prefix_caching else ""
 
-    # max_model_len absent/0/"auto" → omit flag, let vLLM auto-cap from gpu_memory_util
     max_len = model.get("max_model_len", 0)
     if max_len and str(max_len) != "auto":
         max_len_flag = f"--max-model-len {max_len}"
@@ -69,9 +86,43 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
     print()
 
 
+def write_env_dual(large: dict, small: dict, hf_token: str | None = None):
+    """Write .env for a co-deploy run (two models on one GPU)."""
+    lg_quant = large.get("quantization", "none")
+    sm_quant = small.get("quantization", "none")
+
+    lg_max = large.get("max_model_len", 0)
+    sm_max = small.get("max_model_len", 0)
+
+    lines = [
+        # ── Large model (vllm-large, port 8000) ──
+        f"MODEL_NAME={large['name']}",
+        f"TENSOR_PARALLEL={large.get('tensor_parallel', 1)}",
+        f"GPU_MEMORY_UTIL={large.get('gpu_memory_util', 0.60)}",
+        f"MAX_MODEL_LEN_FLAG={f'--max-model-len {lg_max}' if lg_max and str(lg_max) != 'auto' else ''}",
+        f"QUANTIZATION_FLAG={f'--quantization {lg_quant}' if lg_quant != 'none' else ''}",
+        f"ENABLE_PREFIX_CACHING_FLAG=--enable-prefix-caching",
+        # ── Small model (vllm-small, port 8001) ──
+        f"SMALL_MODEL_NAME={small['name']}",
+        f"SMALL_TENSOR_PARALLEL={small.get('tensor_parallel', 1)}",
+        f"SMALL_GPU_MEMORY_UTIL={small.get('gpu_memory_util', 0.30)}",
+        f"SMALL_MAX_MODEL_LEN_FLAG={f'--max-model-len {sm_max}' if sm_max and str(sm_max) != 'auto' else ''}",
+        f"SMALL_QUANTIZATION_FLAG={f'--quantization {sm_quant}' if sm_quant != 'none' else ''}",
+    ]
+    if hf_token:
+        lines.append(f"HF_TOKEN={hf_token}")
+
+    with open(".env", "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+    print("=== .env written (co-deploy) ===")
+    for line in lines:
+        print(f"  {line}")
+    print()
+
+
 def probe_max_model_len(host: str = "localhost", port: int = 8000) -> int | None:
     """Query vLLM for the max_model_len it actually started with."""
-    import json
     url = f"http://{host}:{port}/v1/models"
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
@@ -105,7 +156,7 @@ def serve_model(model: dict, enable_prefix_caching: bool = True):
     hf_token = os.environ.get("HF_TOKEN")
     write_env(model, enable_prefix_caching=enable_prefix_caching, hf_token=hf_token)
     run(["docker", "compose", "down"])
-    run(["docker", "compose", "up", "-d", "vllm"])
+    run(["docker", "compose", "up", "-d", "vllm-large"])
     wait_for_vllm(timeout=1800)  # large models can take 15-30 min to load on first run
 
 
@@ -124,16 +175,117 @@ def section(title: str):
 
 
 # ---------------------------------------------------------------------------
+# Context-window fitness filter
+# ---------------------------------------------------------------------------
+
+def context_window_check(model: dict, bench_key: str) -> bool:
+    """Return True if the model can satisfy at least the smallest prompt+output tier."""
+    max_len = model.get("max_model_len", 0)
+    if not max_len or str(max_len) == "auto":
+        return True  # unknown ceiling → let runtime decide
+
+    cfg = load_config(bench_key)
+    prompt_lens = cfg.get("prompt_token_lengths", [0])
+    output_lens = cfg.get("output_token_lengths", [0])
+    # For context-stress the output is a fixed scalar under requests.output_tokens
+    if not output_lens or output_lens == [0]:
+        output_lens = [cfg.get("requests", {}).get("output_tokens", 0)]
+
+    min_needed = min(prompt_lens) + min(output_lens)
+    if min_needed > int(max_len):
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Co-deploy sweep  (Goal 2)
+# ---------------------------------------------------------------------------
+
+def co_deploy_sweep(models: list, label_large: str | None = None, label_small: str | None = None):
+    large_pool = [m for m in models if m.get("role") == "large"]
+    small_pool = [m for m in models if m.get("role") == "small"]
+
+    if label_large:
+        large_pool = [m for m in large_pool if m.get("label") == label_large]
+    if label_small:
+        small_pool = [m for m in small_pool if m.get("label") == label_small]
+
+    if not large_pool:
+        print("ERROR: No 'large' role models found (or label filter matched nothing).", file=sys.stderr)
+        sys.exit(1)
+    if not small_pool:
+        print("ERROR: No 'small' role models found (or label filter matched nothing).", file=sys.stderr)
+        sys.exit(1)
+
+    # Build viable pairs (combined gpu_memory_util ≤ 0.95)
+    pairs = []
+    for lg, sm in product(large_pool, small_pool):
+        combined = lg.get("gpu_memory_util", 0.60) + sm.get("gpu_memory_util", 0.30)
+        if combined <= 0.95:
+            pairs.append((lg, sm))
+        else:
+            print(
+                f"SKIP: {lg.get('label')} + {sm.get('label')} — "
+                f"combined gpu_memory_util {combined:.2f} > 0.95"
+            )
+
+    if not pairs:
+        print("ERROR: No viable (large, small) pair with combined gpu_memory_util ≤ 0.95.", file=sys.stderr)
+        sys.exit(1)
+
+    section(f"CO-DEPLOY SWEEP  |  {len(pairs)} pair(s)")
+    hf_token = os.environ.get("HF_TOKEN")
+    failed = []
+
+    for lg, sm in pairs:
+        lg_label = lg.get("label", lg["name"].split("/")[-1])
+        sm_label = sm.get("label", sm["name"].split("/")[-1])
+        section(f"CO-DEPLOY: {lg_label} + {sm_label}")
+
+        write_env_dual(lg, sm, hf_token=hf_token)
+        run(["docker", "compose", "down"])
+        run(["docker", "compose", "--profile", "co-deploy", "up", "-d", "vllm-large", "vllm-small"])
+
+        try:
+            wait_for_vllm(port=8000, timeout=1800)
+            wait_for_vllm(port=8001, timeout=1800)
+        except TimeoutError as e:
+            print(f"  *** TIMEOUT: {e}", file=sys.stderr)
+            failed.append(f"{lg_label}+{sm_label}")
+            run(["docker", "compose", "down"], check=False)
+            continue
+
+        try:
+            run([
+                "docker", "compose", "--profile", "co-deploy",
+                "run", "--rm", "co-runner",
+                "python", "/app/core/co_deploy_runner.py",
+                "--config", "/configs/split_load.yaml",
+            ])
+        except Exception as e:
+            print(f"  *** BENCH FAILED: {e}", file=sys.stderr)
+            failed.append(f"{lg_label}+{sm_label}")
+        finally:
+            run(["docker", "compose", "down"], check=False)
+
+    section("CO-DEPLOY SWEEP COMPLETE")
+    if failed:
+        print(f"WARNING: {len(failed)} pair(s) failed: {failed}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
+    all_bench_choices = list(BENCH_CONFIGS.keys()) + ["co-deploy"]
+
     parser = argparse.ArgumentParser(
         description="Sweep benchmarks over all models listed in models.yaml"
     )
     parser.add_argument(
-        "--bench", choices=list(BENCH_CONFIGS.keys()),
-        help="Which benchmark config to run (omit with --serve-only)",
+        "--bench", choices=all_bench_choices,
+        help="Which benchmark to run (omit with --serve-only)",
     )
     parser.add_argument(
         "--serve-only", action="store_true",
@@ -150,7 +302,15 @@ def main():
     )
     parser.add_argument(
         "--label",
-        help="Run only the model with this label",
+        help="Run only the model with this label (single-model benchmarks)",
+    )
+    parser.add_argument(
+        "--label-large",
+        help="(co-deploy only) Filter large-role models to this label",
+    )
+    parser.add_argument(
+        "--label-small",
+        help="(co-deploy only) Filter small-role models to this label",
     )
     args = parser.parse_args()
 
@@ -159,7 +319,12 @@ def main():
 
     models = load_models(args.models_file)
 
-    # Filter by label if requested
+    # ── Co-deploy: separate code path ─────────────────────────────────────────
+    if args.bench == "co-deploy":
+        co_deploy_sweep(models, label_large=args.label_large, label_small=args.label_small)
+        return
+
+    # Filter by label if requested (for single-model benchmarks)
     if args.label:
         models = [m for m in models if m.get("label") == args.label]
         if not models:
@@ -183,7 +348,6 @@ def main():
         for i, model in enumerate(models, 1):
             label = model.get("label", model["name"].split("/")[-1])
             print(f"\n[{i}/{len(models)}] Probing: {model['name']}  (label={label})")
-            # Temporarily override max_model_len to 0 → write_env omits the flag
             probe_model = {**model, "max_model_len": 0}
             try:
                 serve_model(probe_model, enable_prefix_caching=False)
@@ -205,54 +369,44 @@ def main():
             print()
         return
 
-    section(f"SWEEP: {args.bench}  |  {len(models)} model(s)")
+    # ── Single-model sweep: serve → bench for each model ──────────────────────
+    bench_key = args.bench
+    section(f"SWEEP: {bench_key}  |  {len(models)} model(s)")
 
-    # ── KV analysis: run each model TWICE (prefix caching on vs off) ──────────
-    if args.bench == "kv-analysis":
-        failed = []
-        for i, model in enumerate(models, 1):
-            label = model.get("label", model["name"].split("/")[-1])
+    failed = []
+    for i, model in enumerate(models, 1):
+        label = model.get("label", model["name"].split("/")[-1])
 
-            print(f"\n[{i}/{len(models)}] Model: {model['name']}  (label={label})")
-
-            for caching in (True, False):
-                tag = "prefix-ON" if caching else "prefix-OFF"
-                print(f"\n  ── {tag} ──")
-                try:
-                    serve_model(model, enable_prefix_caching=caching)
-                    run_bench(args.bench)
-                except Exception as e:
-                    print(f"  *** FAILED {label} ({tag}): {e} — skipping", file=sys.stderr)
-                    failed.append(f"{label} ({tag})")
-                    break  # skip prefix-OFF run if prefix-ON already failed
-
-    # ── All other benchmarks: serve once, bench once ──────────────────────────
-    else:
-        failed = []
-        for i, model in enumerate(models, 1):
-            label = model.get("label", model["name"].split("/")[-1])
-            print(f"\n[{i}/{len(models)}] Serving: {model['name']}  (label={label})")
-            try:
-                serve_model(model, enable_prefix_caching=True)
-            except Exception as e:
-                print(f"  *** FAILED to start {label}: {e} — skipping", file=sys.stderr)
-                failed.append(label)
+        # Context-window fitness check
+        if bench_key in ("concurrency-bench", "context-stress"):
+            if not context_window_check(model, bench_key):
+                max_len = model.get("max_model_len", "?")
+                print(
+                    f"  SKIP {label}: max_model_len={max_len} cannot satisfy "
+                    f"even the smallest prompt+output tier for {bench_key}"
+                )
                 continue
-            print(f"[{i}/{len(models)}] Benchmarking: {args.bench}")
-            try:
-                run_bench(args.bench)
-            except Exception as e:
-                print(f"  *** FAILED bench for {label}: {e} — skipping", file=sys.stderr)
-                failed.append(label)
 
-        section(f"SWEEP COMPLETE: {args.bench}")
-        if failed:
-            print(f"WARNING: {len(failed)} model(s) failed and were skipped:")
-            for f in failed:
-                print(f"  - {f}")
-        return
+        print(f"\n[{i}/{len(models)}] Serving: {model['name']}  (label={label})")
+        try:
+            serve_model(model, enable_prefix_caching=True)
+        except Exception as e:
+            print(f"  *** FAILED to start {label}: {e} — skipping", file=sys.stderr)
+            failed.append(label)
+            continue
+        print(f"[{i}/{len(models)}] Benchmarking: {bench_key}")
+        try:
+            run_bench(bench_key)
+        except Exception as e:
+            print(f"  *** FAILED bench for {label}: {e} — skipping", file=sys.stderr)
+            failed.append(label)
 
-    section(f"SWEEP COMPLETE: {args.bench}")
+    section(f"SWEEP COMPLETE: {bench_key}")
+    if failed:
+        print(f"WARNING: {len(failed)} model(s) failed and were skipped:")
+        for f in failed:
+            print(f"  - {f}")
+    return
 
 
 if __name__ == "__main__":

@@ -1,0 +1,35 @@
+# =============================================================================
+# Goal 2 — Co-Deploy Split-Load Benchmark
+# =============================================================================
+# Find which (large, small) model pair delivers the best P95 TTFT and ITL
+# across 10 concurrent users when both models run simultaneously on the
+# same GPU.
+#
+# See PRD §4.4 for design rationale.
+# =============================================================================
+
+benchmark:
+  name: "Split-Load Co-Deploy"
+  description: "Benchmark co-deployed large+small models under 70/30 traffic split"
+  output_prefix: "split_load"
+
+# Traffic split
+split:
+  total_concurrency: 10
+  large_fraction: 0.7      # 7 slots → large, 3 slots → small
+
+# Same 2-D sweep grid as Goal 1 for direct comparability
+prompt_token_lengths: [512, 4096, 16384]
+output_token_lengths: [256, 512, 1024, 2048, 4096]
+
+requests:
+  num_requests: 200        # Per sweep point
+  system_prompt: |
+    You are a helpful AI assistant.
+
+telemetry:
+  sample_interval_sec: 2.0
+  collect_gpu_stats: true
+  collect_power_draw: false
+  collect_temperature: false
+  collect_memory_clock: false

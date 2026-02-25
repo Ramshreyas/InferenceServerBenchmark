@@ -1,8 +1,19 @@
+# =============================================================================
+# docker-compose.yml — Blackwell Inference Testbench
+# =============================================================================
+# Services:
+#   vllm-large   Primary inference server (port 8000)  — always used
+#   vllm-small   Secondary inference server (port 8001) — co-deploy profile only
+#   bench-runner  Benchmark runner for single-model benchmarks
+#   co-runner     Benchmark runner for co-deploy (Goal 2)
+#   nvitop        One-shot GPU snapshot (monitoring profile)
+# =============================================================================
+
 services:
-  # vLLM OpenAI-compatible inference server
-  vllm:
+  # ── Primary vLLM server (large / single model) ────────────────────────────
+  vllm-large:
     image: vllm/vllm-openai:cu130-nightly
-    container_name: vllm-inference
+    container_name: vllm-large
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -10,11 +21,11 @@ services:
       - LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64
       - HF_TOKEN=${HF_TOKEN:-}
     ports:
-      - "8000:8000"  # OpenAI API compatible endpoint
+      - "8000:8000"
     volumes:
-      - ~/.cache/huggingface:/root/.cache/huggingface  # Model cache
-      - /usr/local/cuda-13.1/compat:/usr/local/cuda/compat:ro  # CUDA 13.1 compat libs for Blackwell
-      - ./results:/results  # Telemetry output
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - /usr/local/cuda-13.1/compat:/usr/local/cuda/compat:ro
+      - ./results:/results
     command: >
       --host 0.0.0.0
       --port 8000
@@ -41,29 +52,97 @@ services:
     networks:
       - inference-net
 
-  # Benchmarking runner
+  # ── Secondary vLLM server (small model, co-deploy only) ───────────────────
+  vllm-small:
+    image: vllm/vllm-openai:cu130-nightly
+    container_name: vllm-small
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64
+      - HF_TOKEN=${HF_TOKEN:-}
+    ports:
+      - "8001:8001"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - /usr/local/cuda-13.1/compat:/usr/local/cuda/compat:ro
+      - ./results:/results
+    command: >
+      --host 0.0.0.0
+      --port 8001
+      --model ${SMALL_MODEL_NAME}
+      --tensor-parallel-size ${SMALL_TENSOR_PARALLEL:-1}
+      --gpu-memory-utilization ${SMALL_GPU_MEMORY_UTIL:-0.25}
+      ${SMALL_MAX_MODEL_LEN_FLAG:-}
+      ${SMALL_QUANTIZATION_FLAG:-}
+      --trust-remote-code
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    profiles:
+      - co-deploy
+    networks:
+      - inference-net
+
+  # ── Benchmark runner (single-model: sanity, concurrency-bench, context-stress)
   bench-runner:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: bench-runner
     depends_on:
-      vllm:
+      vllm-large:
         condition: service_healthy
     environment:
-      - VLLM_ENDPOINT=http://vllm:8000/v1
-      - CONFIG_PATH=${CONFIG_PATH:-/configs/llama3_70b_sweep.yaml}
+      - VLLM_ENDPOINT=http://vllm-large:8000/v1
+      - CONFIG_PATH=${CONFIG_PATH:-/configs/sanity_check.yaml}
     volumes:
-      - ./configs:/configs:ro  # Read-only config files
-      - ./core:/app/core:ro    # Python modules
-      - ./results:/results     # Write telemetry & results
-    command: python /app/core/bench_runner.py --config ${CONFIG_PATH:-/configs/llama3_70b_sweep.yaml}
+      - ./configs:/configs:ro
+      - ./core:/app/core:ro
+      - ./results:/results
+    command: python /app/core/bench_runner.py --config ${CONFIG_PATH:-/configs/sanity_check.yaml}
     networks:
       - inference-net
     profiles:
-      - benchmark  # Only start when explicitly requested
+      - benchmark
 
-  # GPU telemetry collector (optional)
+  # ── Co-deploy runner (Goal 2: split-load against two endpoints) ────────────
+  co-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: co-runner
+    environment:
+      - VLLM_ENDPOINT_LARGE=http://vllm-large:8000/v1
+      - VLLM_ENDPOINT_SMALL=http://vllm-small:8001/v1
+      - LARGE_MODEL_NAME=${MODEL_NAME:-}
+      - SMALL_MODEL_NAME=${SMALL_MODEL_NAME:-}
+    volumes:
+      - ./configs:/configs:ro
+      - ./core:/app/core:ro
+      - ./results:/results
+    depends_on:
+      vllm-large:
+        condition: service_healthy
+      vllm-small:
+        condition: service_healthy
+    profiles:
+      - co-deploy
+    networks:
+      - inference-net
+
+  # ── GPU telemetry (optional) ───────────────────────────────────────────────
   nvitop:
     image: nvidia/cuda:12.3.0-base-ubuntu22.04
     container_name: gpu-monitor
@@ -88,7 +167,7 @@ services:
     networks:
       - inference-net
     profiles:
-      - monitoring  # Only start when explicitly requested
+      - monitoring
 
 networks:
   inference-net:
