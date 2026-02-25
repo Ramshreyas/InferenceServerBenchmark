@@ -213,6 +213,15 @@ class BenchmarkRunner:
 
         all_results = []
 
+        # Record skipped lengths as sentinel rows so the output files are self-describing
+        for c in skipped:
+            all_results.append({
+                "model": self._model_name,
+                "context_length": c,
+                "skipped": True,
+                "skip_reason": f"exceeds server max_model_len ({server_max_len:,})",
+            })
+
         for ctx_len in context_lengths:
             results = self._run_benchmark_sweep(ctx_len)
             all_results.extend(results)
