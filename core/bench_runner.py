@@ -226,7 +226,11 @@ class BenchmarkRunner:
         """Save benchmark results to JSON and CSV."""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         prefix = self.config['benchmark']['output_prefix']
-        
+
+        # Inject model name into every result record so files are self-describing
+        for r in results:
+            r['model'] = self._model_name
+
         # Save detailed results as JSON
         json_path = self.output_dir / f"{prefix}_{timestamp}_detailed.json"
         save_json(results, json_path)
