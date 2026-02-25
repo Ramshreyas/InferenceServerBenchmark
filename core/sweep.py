@@ -148,12 +148,18 @@ def run(cmd: list, check: bool = True, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=check, **kwargs)
 
 
+def compose_down_all(check: bool = True):
+    """Tear down ALL services (including co-deploy profile) and prune stale networks."""
+    run(["docker", "compose", "--profile", "co-deploy", "down", "--remove-orphans"], check=check)
+    run(["docker", "network", "prune", "-f"], check=False)
+
+
 def compose_up(args: list[str], retries: int = 3, delay: float = 5.0):
     """Run 'docker compose ... up' with retries to handle Docker network race conditions.
 
     After 'docker compose down' removes the network, Docker may still reference
-    the stale network ID internally.  Between retries we tear down containers,
-    prune dangling networks, and sleep to let the daemon fully reconcile.
+    the stale network ID internally.  Between retries we tear down ALL services
+    (including profiled ones), prune dangling networks, and sleep.
     """
     cmd = ["docker", "compose"] + args
     for attempt in range(1, retries + 1):
@@ -161,10 +167,7 @@ def compose_up(args: list[str], retries: int = 3, delay: float = 5.0):
         if result.returncode == 0:
             return
         print(f">>> compose up failed (attempt {attempt}/{retries}), retrying in {delay}s …", flush=True)
-        # Tear down any half-created resources
-        run(["docker", "compose", "down", "--remove-orphans"], check=False)
-        # Prune dangling / stale networks that Docker failed to clean up
-        run(["docker", "network", "prune", "-f"], check=False)
+        compose_down_all(check=False)
         time.sleep(delay)
     # Final attempt — let it raise on failure
     run(cmd, check=True)
@@ -207,7 +210,7 @@ def serve_model(model: dict, enable_prefix_caching: bool = True):
         return
 
     write_env(model, enable_prefix_caching=enable_prefix_caching, hf_token=hf_token)
-    run(["docker", "compose", "down", "--remove-orphans"])
+    compose_down_all()
     compose_up(["up", "-d", "vllm-large"])
     wait_for_vllm(timeout=1800)  # large models can take 15-30 min to load on first run
 
@@ -336,7 +339,7 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
         if running_lg == lg["name"] and running_sm == sm["name"]:
             print(f">>> {lg_label} + {sm_label} already running — reusing containers", flush=True)
         else:
-            run(["docker", "compose", "down", "--remove-orphans"])
+            compose_down_all()
             compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large", "vllm-small"])
 
             try:
@@ -345,7 +348,7 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
             except TimeoutError as e:
                 print(f"  *** TIMEOUT: {e}", file=sys.stderr)
                 failed.append(f"{lg_label}+{sm_label}")
-                run(["docker", "compose", "down", "--remove-orphans"], check=False)
+                compose_down_all(check=False)
                 continue
 
         try:
@@ -359,7 +362,7 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
             print(f"  *** BENCH FAILED: {e}", file=sys.stderr)
             failed.append(f"{lg_label}+{sm_label}")
         finally:
-            run(["docker", "compose", "down", "--remove-orphans"], check=False)
+            compose_down_all(check=False)
 
     section("CO-DEPLOY SWEEP COMPLETE")
     if failed:
@@ -453,7 +456,7 @@ def main():
             except Exception as e:
                 print(f"  *** FAILED {label}: {e}", file=sys.stderr)
             finally:
-                run(["docker", "compose", "down", "--remove-orphans"], check=False)
+                compose_down_all(check=False)
 
         section("PROBE RESULTS — paste into models.yaml")
         for label, name, detected in suggestions:
@@ -495,7 +498,7 @@ def main():
             failed.append(label)
 
     # Final cleanup
-    run(["docker", "compose", "down", "--remove-orphans"], check=False)
+    compose_down_all(check=False)
 
     section(f"SWEEP COMPLETE: {bench_key}")
     if failed:
