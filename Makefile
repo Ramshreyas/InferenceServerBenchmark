@@ -111,7 +111,10 @@ gpu-monitor:
 prefetch:
 	$(PYTHON) core/prefetch.py
 
+tui:
+	$(PYTHON) tui.py
+
 .PHONY: \
 	sanity context-stress concurrency-bench co-deploy probe serve \
 	bench-sanity bench-concurrency \
-	logs status stop results gpu-monitor prefetch
+	logs status stop results gpu-monitor prefetch tui

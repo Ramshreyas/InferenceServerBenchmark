@@ -439,9 +439,10 @@ def main():
 
     # Filter by label if requested (for single-model benchmarks)
     if args.label:
-        models = [m for m in models if m.get("label") == args.label]
+        target_labels = set(args.label.split(","))
+        models = [m for m in models if m.get("label") in target_labels]
         if not models:
-            print(f"ERROR: No model with label '{args.label}' found in {args.models_file}", file=sys.stderr)
+            print(f"ERROR: No models found matching labels '{args.label}' in {args.models_file}", file=sys.stderr)
             sys.exit(1)
 
     if args.serve_only:

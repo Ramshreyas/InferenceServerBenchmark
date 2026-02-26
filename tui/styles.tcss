@@ -1,0 +1,134 @@
+/* ── Global ─────────────────────────────────────────────────────── */
+
+Screen {
+    background: $surface;
+}
+
+Header {
+    dock: top;
+}
+
+Footer {
+    dock: bottom;
+}
+
+/* ── Results Tab ────────────────────────────────────────────────── */
+
+ResultsTab {
+    layout: horizontal;
+    height: 1fr;
+}
+
+#results-sidebar {
+    width: 28;
+    border-right: tall $primary-background;
+    padding: 1;
+    overflow-y: auto;
+}
+
+ResultsPane {
+    width: 1fr;
+    padding: 1 2;
+    overflow-y: auto;
+    border: transparent; /* Invisible border to prevent layout shift */
+}
+
+ResultsPane:focus {
+    border: tall $accent;
+}
+
+/* ── Tuner controls ─────────────────────────────────────────────── */
+
+.tuner-controls {
+    layout: horizontal;
+    height: 3;
+    margin-bottom: 1;
+    align: left middle;
+}
+
+.tuner-controls Label {
+    margin: 0 1;
+    text-style: bold;
+}
+
+.tuner-controls .value {
+    color: $accent;
+    text-style: bold;
+    width: auto;
+    margin: 0 1;
+}
+
+/* ── Bar chart area ─────────────────────────────────────────────── */
+
+#bar-chart-area {
+    height: auto;
+    min-height: 10;
+    max-height: 24;
+    margin: 1 0;
+}
+
+/* ── Minimap ────────────────────────────────────────────────────── */
+
+#minimap {
+    height: auto;
+    min-height: 6;
+    max-height: 10;
+    margin: 1 0;
+    border: tall $primary-background;
+    padding: 1;
+}
+
+/* ── Scorecard ──────────────────────────────────────────────────── */
+
+#scorecard {
+    height: 3;
+    margin: 0 0 1 0;
+    text-style: bold;
+}
+
+/* ── Info panel ─────────────────────────────────────────────────── */
+
+.info-panel {
+    height: auto;
+    margin-bottom: 1;
+    padding: 1;
+    background: $panel;
+    border: round $primary-background;
+}
+
+/* ── Run tab ────────────────────────────────────────────────────── */
+
+RunTab {
+    padding: 2 4;
+    overflow-y: auto;
+}
+
+RunTab Select {
+    margin: 1 0;
+}
+
+RunTab RadioSet {
+    margin: 1 0;
+}
+
+RunTab Button {
+    margin: 2 0;
+}
+
+#run-log {
+    height: 1fr;
+    min-height: 10;
+    border: tall $primary-background;
+    margin-top: 1;
+}
+
+/* ── Daemon tab ─────────────────────────────────────────────────── */
+
+DaemonTab {
+    padding: 2 4;
+    overflow-y: auto;
+}
+
+#daemon-table {
+    height: 1fr;
+}

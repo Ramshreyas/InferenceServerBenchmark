@@ -534,7 +534,178 @@ From `split_load_*_summary.csv`, for the `(prompt_tokens, output_tokens)` combin
 
 ---
 
-## 10. What This Benchmark Explicitly Does NOT Answer
+## 10. TUI Dashboard (`tui.py`)
+
+### 10.1 Purpose
+
+Provide a single interactive terminal interface that can:
+
+1. **Browse and visualise** benchmark results from `results/` — tables, heatmaps, and summary panels, all rendered in-terminal.
+2. **Launch benchmarks** against models defined in `models.yaml` — selecting benchmark type, model(s), and sweep parameters from within the TUI.
+3. **Daemonize long-running benchmark sweeps** — kick off a benchmark, detach from the TUI, and reconnect later to check progress.
+
+The TUI replaces the need to open Jupyter for quick analysis and the need to remember `make` target syntax for running benchmarks. It is the primary interface for demos and day-to-day operation, and works over SSH.
+
+### 10.2 Technology
+
+- **[Textual](https://textual.textualize.io/)** — async Python TUI framework. Provides `DataTable`, `TabbedContent`, `Header`, `Footer`, `Static`, `Input`, and `Log` widgets out of the box.
+- **[Rich](https://rich.readthedocs.io/)** — used by Textual internally; also used directly for conditional cell colouring (green/yellow/red thresholds).
+- **[plotext](https://github.com/piccolomo/plotext)** (optional) — terminal-native bar/scatter charts embedded in Textual `Static` widgets for lightweight sparkline-style visualisation.
+
+### 10.3 Layout
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Blackwell Inference Testbench                        [F1 Help] │
+├─────────────────────────────────────────────────────────────────┤
+│ [Tab: Results]  [Tab: Run Benchmark]  [Tab: Daemon Status]      │
+│                                                                 │
+│  ┌─ Results ──────────────────────────────────────────────────┐ │
+│  │                                                            │ │
+│  │  Sidebar (TreeView)      Main Panel                        │ │
+│  │  ├── Concurrency Bench   ┌──────────────────────────────┐  │ │
+│  │  │   └── 2026-02-25      │  P95 TTFT Heatmap (colored   │  │ │
+│  │  ├── Co-Deploy            │  DataTable with conditional  │  │ │
+│  │  │   └── 2026-02-26      │  formatting)                 │  │ │
+│  │  └── Sanity Checks       │                              │  │ │
+│  │      └── ...             │  Summary stats panel below   │  │ │
+│  │                          └──────────────────────────────┘  │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  [q] Quit  [r] Refresh  [e] Export SVG  [Tab] Switch pane       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 10.4 Results Tab — Views
+
+Each result file group (concurrency, co-deploy, sanity) gets a dedicated view. Views are selected from the sidebar tree.
+
+#### Concurrency Bench View
+| Widget | Content |
+|--------|---------|
+| **Info panel** | Model name, timestamp, total requests, success rate |
+| **P95 TTFT heatmap** | `DataTable` — rows = `prompt_tokens_target`, cols = `output_tokens_target`. Cells coloured: green (< 200 ms), yellow (200–1000 ms), red (> 1000 ms) |
+| **P95 ITL heatmap** | Same layout. Green (< 50 ms), yellow (50–100 ms), red (> 100 ms) |
+| **Throughput table** | Median tok/s per sweep point |
+| **Decision CSV** | Rendered as a sortable `DataTable` if `*_decision.csv` exists |
+
+#### Co-Deploy View
+| Widget | Content |
+|--------|---------|
+| **Info panel** | Large model, small model, traffic split, timestamp |
+| **Side-by-side P95 TTFT** | Two `DataTable` heatmaps — large (left) and small (right) — with shared colour scale |
+| **Side-by-side P95 ITL** | Same layout |
+| **Combined throughput table** | Summed tok/s per sweep point |
+| **Summary CSV** | Full `split_load_*_summary.csv` as sortable `DataTable` |
+
+#### Sanity Check View
+| Widget | Content |
+|--------|---------|
+| **Simple table** | One row per request — TTFT, ITL, throughput, success |
+
+### 10.5 Run Benchmark Tab
+
+Provides a form-based interface to launch benchmarks without memorising `make` targets.
+
+#### Form Fields
+| Field | Widget | Options |
+|-------|--------|---------|
+| **Benchmark type** | `Select` | `sanity`, `context-stress`, `concurrency-bench`, `co-deploy` |
+| **Model filter** (single-model) | `Select` | Labels from `models.yaml`, or "All" |
+| **Large model** (co-deploy) | `Select` | Labels with `role: large` |
+| **Small model** (co-deploy) | `Select` | Labels with `role: small` |
+| **Run mode** | `RadioSet` | `Foreground` (stream logs in TUI) / `Daemon` (background, detachable) |
+
+#### Execution Flow — Foreground
+
+1. User fills form, presses `[Enter]` or clicks **Run**.
+2. TUI constructs the equivalent `make` command (e.g. `make concurrency-bench LABEL=qwq-32b`).
+3. Command runs as a subprocess; stdout/stderr stream into a `RichLog` widget in real-time.
+4. On completion, the Results tab auto-refreshes to pick up new files.
+
+#### Execution Flow — Daemon
+
+1. Same form, but with **Daemon** selected.
+2. TUI spawns the benchmark via a lightweight daemon wrapper (see §10.6).
+3. The TUI immediately returns to the **Daemon Status** tab showing the running job.
+4. User can quit the TUI (`q`), close SSH, reconnect later, relaunch `python tui.py`, and the Daemon Status tab will show the job's current state.
+
+### 10.6 Daemonization
+
+**Mechanism:** `nohup` + PID file + structured log.
+
+```
+~/.cache/inference-bench/daemons/
+  ├── {job_id}.pid          # PID of the background process
+  ├── {job_id}.log          # stdout + stderr (append mode)
+  ├── {job_id}.meta.json    # { benchmark, label, started_at, status }
+  └── {job_id}.result       # path to result files once complete
+```
+
+- **`job_id`**: `{bench_type}_{label}_{YYYYMMDD_HHMMSS}` (e.g. `concurrency-bench_qwq-32b_20260226_143000`).
+- **Spawn**: `nohup make {target} LABEL={label} > {job_id}.log 2>&1 & echo $! > {job_id}.pid`
+- **Status detection**: Check if PID in `.pid` file is still alive (`kill -0`). If dead, check exit code from `wait` or parse the log tail for success/failure markers.
+- **Metadata updates**: The daemon wrapper writes to `{job_id}.meta.json`:
+  - On start: `{ "status": "running", "started_at": "...", "benchmark": "...", "label": "..." }`
+  - On completion: updates `status` to `"completed"` or `"failed"`, adds `"finished_at"`, `"result_files": [...]`, `"exit_code": N`
+
+### 10.7 Daemon Status Tab
+
+| Column | Content |
+|--------|---------|
+| **Job ID** | e.g. `concurrency-bench_qwq-32b_20260226_143000` |
+| **Benchmark** | `concurrency-bench`, `co-deploy`, etc. |
+| **Model(s)** | Label(s) |
+| **Status** | `running` / `completed` / `failed` (colour-coded) |
+| **Started** | Timestamp |
+| **Elapsed** | Live-updating duration |
+| **Actions** | `[v]` View log tail, `[k]` Kill job, `[→]` Jump to results |
+
+### 10.8 Keybindings
+
+| Key | Action |
+|-----|--------|
+| `q` | Quit TUI |
+| `r` | Refresh results / daemon status |
+| `e` | Export current view as SVG (via Textual's `save_screenshot`) |
+| `Tab` | Cycle tabs |
+| `j/k` or `↑/↓` | Navigate tables |
+| `Enter` | Expand selection / run form |
+| `Esc` | Back / cancel |
+| `F1` | Show help overlay |
+
+### 10.9 File Inventory
+
+| File | Status | Notes |
+|------|--------|-------|
+| `tui.py` | **New** | Main entry point. Top-level Textual `App` class, tab definitions, keybindings. |
+| `tui/results_tab.py` | **New** | Results browser — sidebar tree, heatmap/table rendering, view switching. |
+| `tui/run_tab.py` | **New** | Benchmark launch form — model selection, foreground/daemon execution. |
+| `tui/daemon_tab.py` | **New** | Daemon status table — job listing, log viewer, kill action. |
+| `tui/daemon.py` | **New** | Daemonization logic — spawn, PID tracking, meta.json management, status polling. |
+| `tui/heatmap.py` | **New** | Colour-scaled `DataTable` builder — takes a pivot DataFrame and threshold config, returns a styled table widget. |
+| `tui/styles.tcss` | **New** | Textual CSS stylesheet for layout and theming. |
+
+### 10.10 Makefile Integration
+
+```makefile
+tui:
+	$(PYTHON) tui.py
+```
+
+### 10.11 Dependencies
+
+Add to project dependencies (not `notebooks/requirements.txt`):
+
+```
+textual>=0.70.0
+rich>=13.0.0
+plotext>=5.2.0    # optional, for terminal charts
+```
+
+---
+
+## 11. What This Benchmark Explicitly Does NOT Answer
 
 - **RAG / prefix caching benefit** — omitted. Add `configs/prefix_cache.yaml` if this becomes a selection criterion.
 - **Fine-tuned / LoRA adapters** — out of scope.
