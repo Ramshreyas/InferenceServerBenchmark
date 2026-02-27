@@ -36,6 +36,7 @@ services:
       ${QUANTIZATION_FLAG:-}
       ${ENABLE_PREFIX_CACHING_FLAG:---enable-prefix-caching}
       --trust-remote-code
+      ${EXTRA_VLLM_FLAGS:-}
     deploy:
       resources:
         reservations:
@@ -77,6 +78,7 @@ services:
       ${SMALL_MAX_MODEL_LEN_FLAG:-}
       ${SMALL_QUANTIZATION_FLAG:-}
       --trust-remote-code
+      ${SMALL_EXTRA_VLLM_FLAGS:-}
     deploy:
       resources:
         reservations:

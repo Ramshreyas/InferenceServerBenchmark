@@ -55,6 +55,8 @@ class BenchmarkRunner:
             else None
         )
 
+        self.exit_code = 0  # 0 = pass, 1 = partial failure, 2 = total failure
+
         # Resolve model name
         configured_name = self.config["model"]["name"]
         self._model_name = (
@@ -536,42 +538,67 @@ class BenchmarkRunner:
     # ── Summary printing ─────────────────────────────────────────────────────
 
     def _print_summary(self, results: List[Dict]):
-        successful = [r for r in results if r.get("success")]
+        from collections import Counter
 
-        if not successful:
-            self.logger.error("No successful requests!")
-            return
+        skipped = [r for r in results if r.get("skipped")]
+        non_skipped = [r for r in results if not r.get("skipped")]
+        successful = [r for r in non_skipped if r.get("success")]
+        failed = [r for r in non_skipped if not r.get("success")]
 
-        ttfts = [r["ttft_ms"] for r in successful if r.get("ttft_ms")]
-        itls = [r["itl_ms"] for r in successful if r.get("itl_ms")]
-        throughputs = [r["throughput_tokens_per_sec"] for r in successful]
+        # ── Set exit code ────────────────────────────────────────────────
+        if len(non_skipped) == 0 or len(failed) == len(non_skipped):
+            self.exit_code = 2  # total failure
+        elif len(failed) > 0:
+            self.exit_code = 1  # partial failure
+        else:
+            self.exit_code = 0  # clean pass
 
+        # ── Summary header ───────────────────────────────────────────────
         self.logger.info("\n" + "=" * 60)
         self.logger.info("BENCHMARK SUMMARY")
         self.logger.info("=" * 60)
-        self.logger.info(f"Total Requests: {len(results)}")
-        self.logger.info(f"Successful: {len(successful)}")
-        self.logger.info(f"Failed: {len(results) - len(successful)}")
+        self.logger.info(f"Total Requests: {len(non_skipped)}  (+ {len(skipped)} skipped)")
+        self.logger.info(f"Successful:     {len(successful)}")
+        self.logger.info(f"Failed:         {len(failed)}")
 
-        if ttfts:
-            self.logger.info(f"\nTime to First Token (TTFT):")
-            self.logger.info(f"  Mean: {format_latency(np.mean(ttfts))}")
-            self.logger.info(f"  P50:  {format_latency(np.percentile(ttfts, 50))}")
-            self.logger.info(f"  P95:  {format_latency(np.percentile(ttfts, 95))}")
-            self.logger.info(f"  P99:  {format_latency(np.percentile(ttfts, 99))}")
+        # ── Latency & throughput (only when there are successes) ─────────
+        if successful:
+            ttfts = [r["ttft_ms"] for r in successful if r.get("ttft_ms")]
+            itls = [r["itl_ms"] for r in successful if r.get("itl_ms")]
+            throughputs = [r["throughput_tokens_per_sec"] for r in successful]
 
-        if itls:
-            self.logger.info(f"\nInter-Token Latency (ITL):")
-            self.logger.info(f"  Mean: {format_latency(np.mean(itls))}")
-            self.logger.info(f"  P50:  {format_latency(np.percentile(itls, 50))}")
-            self.logger.info(f"  P95:  {format_latency(np.percentile(itls, 95))}")
+            if ttfts:
+                self.logger.info(f"\nTime to First Token (TTFT):")
+                self.logger.info(f"  Mean: {format_latency(np.mean(ttfts))}")
+                self.logger.info(f"  P50:  {format_latency(np.percentile(ttfts, 50))}")
+                self.logger.info(f"  P95:  {format_latency(np.percentile(ttfts, 95))}")
+                self.logger.info(f"  P99:  {format_latency(np.percentile(ttfts, 99))}")
 
-        if throughputs:
-            self.logger.info(f"\nThroughput:")
-            self.logger.info(f"  Mean: {format_throughput(np.mean(throughputs))}")
-            self.logger.info(
-                f"  Total tokens: {sum(r.get('tokens_generated', 0) for r in successful)}"
-            )
+            if itls:
+                self.logger.info(f"\nInter-Token Latency (ITL):")
+                self.logger.info(f"  Mean: {format_latency(np.mean(itls))}")
+                self.logger.info(f"  P50:  {format_latency(np.percentile(itls, 50))}")
+                self.logger.info(f"  P95:  {format_latency(np.percentile(itls, 95))}")
+
+            if throughputs:
+                self.logger.info(f"\nThroughput:")
+                self.logger.info(f"  Mean: {format_throughput(np.mean(throughputs))}")
+                self.logger.info(
+                    f"  Total tokens: {sum(r.get('tokens_generated', 0) for r in successful)}"
+                )
+
+        # ── Failure report ───────────────────────────────────────────────
+        if failed:
+            self.logger.info("\n" + "-" * 60)
+            self.logger.info("FAILURE REPORT")
+            self.logger.info("-" * 60)
+            error_counts = Counter(r.get("error", "unknown error") for r in failed)
+            for rank, (error, count) in enumerate(error_counts.most_common(10), 1):
+                truncated = (error[:150] + "…") if len(error) > 150 else error
+                self.logger.info(f"  {rank}. [{count}x] {truncated}")
+            if len(error_counts) > 10:
+                self.logger.info(f"  … and {len(error_counts) - 10} more distinct error(s)")
+            self.logger.info("-" * 60)
 
         self.logger.info("=" * 60)
 
@@ -583,6 +610,7 @@ def main():
 
     runner = BenchmarkRunner(args.config)
     runner.run()
+    sys.exit(runner.exit_code)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,9 @@
 #   loaded_gb       Approximate VRAM when loaded (weights + overhead).
 #                   Used by sweep.py to auto-compute proportional
 #                   gpu_memory_util splits for co-deploy pairs.
+#   vllm_extra_flags  (optional) Additional vLLM CLI flags passed verbatim.
+#                   Example: "--language-model-only" to skip vision encoders
+#                   on multimodal models for text-only benchmarks.
 #
 # Co-deploy pairs: sweep.py auto-computes memory splits proportional to
 #   loaded_gb, within a total budget of 0.92.  Pairs that cannot fit are
@@ -38,11 +41,12 @@ models:
   - name: Qwen/Qwen3.5-122B-A10B-FP8
     label: qwen35-122b-a10b-fp8
     role: large
-    quantization: fp8           # Official FP8 quant by Qwen
+    quantization: none          # Weights are already FP8 — vLLM auto-detects; do NOT pass --quantization fp8
     gpu_memory_util: 0.90
     tensor_parallel: 2          # ~125 GB at FP8 — needs 2× GPUs
     topology: sparse_moe        # 125B total (qwen3_5_moe), 10B active per token
     loaded_gb: 125
+    vllm_extra_flags: "--language-model-only"   # Qwen3.5 is multimodal; skip vision encoder for text-only benchmarks
 
   - name: openai/gpt-oss-120b
     label: gpt-oss-120b
@@ -72,6 +76,7 @@ models:
     tensor_parallel: 1
     topology: dense             # 28B dense (qwen3_5), multimodal image-text-to-text
     loaded_gb: 28
+    vllm_extra_flags: "--language-model-only"   # Qwen3.5 is multimodal; skip vision encoder for text-only benchmarks
 
   - name: Qwen/Qwen3.5-35B-A3B
     label: qwen35-35b-a3b
@@ -81,6 +86,7 @@ models:
     tensor_parallel: 1
     topology: sparse_moe        # 36B total (qwen3_5_moe), 3B active per token
     loaded_gb: 36
+    vllm_extra_flags: "--language-model-only"   # Qwen3.5 is multimodal; skip vision encoder for text-only benchmarks
 
   - name: zai-org/GLM-4.7-Flash
     label: glm-47-flash

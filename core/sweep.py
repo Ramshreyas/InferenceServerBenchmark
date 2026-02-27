@@ -66,6 +66,8 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
     else:
         max_len_flag = ""
 
+    extra_flags = model.get("vllm_extra_flags", "")
+
     lines = [
         f"MODEL_NAME={model['name']}",
         f"TENSOR_PARALLEL={model.get('tensor_parallel', 1)}",
@@ -73,12 +75,14 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
         f"MAX_MODEL_LEN_FLAG={max_len_flag}",
         f"QUANTIZATION_FLAG={quant_flag}",
         f"ENABLE_PREFIX_CACHING_FLAG={prefix_flag}",
+        f"EXTRA_VLLM_FLAGS={extra_flags}",
         # Placeholders so docker compose doesn't warn about unset vars
         "SMALL_MODEL_NAME=",
         "SMALL_TENSOR_PARALLEL=1",
         "SMALL_GPU_MEMORY_UTIL=0.50",
         "SMALL_MAX_MODEL_LEN_FLAG=",
         "SMALL_QUANTIZATION_FLAG=",
+        "SMALL_EXTRA_VLLM_FLAGS=",
     ]
     if hf_token:
         lines.append(f"HF_TOKEN={hf_token}")
@@ -104,6 +108,9 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
     lg_max = large.get("max_model_len", 0)
     sm_max = small.get("max_model_len", 0)
 
+    lg_extra = large.get("vllm_extra_flags", "")
+    sm_extra = small.get("vllm_extra_flags", "")
+
     lines = [
         # ── Large model (vllm-large, port 8000) ──
         f"MODEL_NAME={large['name']}",
@@ -112,12 +119,14 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
         f"MAX_MODEL_LEN_FLAG={f'--max-model-len {lg_max}' if lg_max and str(lg_max) != 'auto' else ''}",
         f"QUANTIZATION_FLAG={f'--quantization {lg_quant}' if lg_quant != 'none' else ''}",
         f"ENABLE_PREFIX_CACHING_FLAG=--enable-prefix-caching",
+        f"EXTRA_VLLM_FLAGS={lg_extra}",
         # ── Small model (vllm-small, port 8001) ──
         f"SMALL_MODEL_NAME={small['name']}",
         f"SMALL_TENSOR_PARALLEL={small.get('tensor_parallel', 1)}",
         f"SMALL_GPU_MEMORY_UTIL={sm_util}",
         f"SMALL_MAX_MODEL_LEN_FLAG={f'--max-model-len {sm_max}' if sm_max and str(sm_max) != 'auto' else ''}",
         f"SMALL_QUANTIZATION_FLAG={f'--quantization {sm_quant}' if sm_quant != 'none' else ''}",
+        f"SMALL_EXTRA_VLLM_FLAGS={sm_extra}",
     ]
     if hf_token:
         lines.append(f"HF_TOKEN={hf_token}")
@@ -215,12 +224,14 @@ def serve_model(model: dict, enable_prefix_caching: bool = True):
     wait_for_vllm(timeout=1800)  # large models can take 15-30 min to load on first run
 
 
-def run_bench(bench_key: str):
+def run_bench(bench_key: str) -> int:
+    """Run benchmark container; return exit code (0=pass, 1=partial fail, 2+=total fail)."""
     config_path = BENCH_CONFIGS[bench_key]
-    run([
+    result = run([
         "docker", "compose", "run", "--rm", "bench-runner",
         "python", "/app/core/bench_runner.py", "--config", config_path,
-    ])
+    ], check=False)
+    return result.returncode
 
 
 def section(title: str):
@@ -387,6 +398,56 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
 
 
 # ---------------------------------------------------------------------------
+# Report card
+# ---------------------------------------------------------------------------
+
+def _print_report_card(bench_key: str, report: list[tuple[str, str, str]]):
+    """Print a clear pass/fail report card at the end of a sweep."""
+    section(f"REPORT CARD: {bench_key}")
+
+    if not report:
+        print("  (no models were tested)")
+        return
+
+    symbols = {
+        "PASS":       "\u2713 PASS",
+        "PARTIAL":    "\u25d0 PARTIAL",
+        "FAIL":       "\u2717 FAIL",
+        "SERVE_FAIL": "\u2717 SERVE_FAIL",
+        "SKIP":       "\u2298 SKIP",
+    }
+
+    max_label = max(len(label) for label, _, _ in report)
+    for label, status, detail in report:
+        sym = symbols.get(status, status)
+        print(f"  {label:<{max_label}}  {sym:<16} {detail}")
+
+    # ── Tallies ───────────────────────────────────────────────────────────
+    n_pass    = sum(1 for _, s, _ in report if s == "PASS")
+    n_partial = sum(1 for _, s, _ in report if s == "PARTIAL")
+    n_fail    = sum(1 for _, s, _ in report if s in ("FAIL", "SERVE_FAIL"))
+    n_skip    = sum(1 for _, s, _ in report if s == "SKIP")
+    total     = len(report)
+
+    parts = [f"{n_pass}/{total} passed"]
+    if n_partial:
+        parts.append(f"{n_partial} partial")
+    if n_fail:
+        parts.append(f"{n_fail} failed")
+    if n_skip:
+        parts.append(f"{n_skip} skipped")
+    print(f"\n  {',  '.join(parts)}")
+
+    # ── Action items ─────────────────────────────────────────────────────
+    action_items = [(l, d) for l, s, d in report if s in ("FAIL", "SERVE_FAIL", "PARTIAL")]
+    if action_items:
+        print(f"\n  Action items:")
+        for label, detail in action_items:
+            print(f"    \u2192 {label}: {detail}")
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -487,7 +548,8 @@ def main():
     bench_key = args.bench
     section(f"SWEEP: {bench_key}  |  {len(models)} model(s)")
 
-    failed = []
+    report: list[tuple[str, str, str]] = []  # (label, status, detail)
+
     for i, model in enumerate(models, 1):
         label = model.get("label", model["name"].split("/")[-1])
 
@@ -495,34 +557,34 @@ def main():
         if bench_key in ("concurrency-bench", "context-stress"):
             if not context_window_check(model, bench_key):
                 max_len = model.get("max_model_len", "?")
-                print(
-                    f"  SKIP {label}: max_model_len={max_len} cannot satisfy "
-                    f"even the smallest prompt+output tier for {bench_key}"
-                )
+                detail = f"max_model_len={max_len} too small for {bench_key}"
+                print(f"  SKIP {label}: {detail}")
+                report.append((label, "SKIP", detail))
                 continue
 
         print(f"\n[{i}/{len(models)}] Serving: {model['name']}  (label={label})")
         try:
             serve_model(model, enable_prefix_caching=True)
         except Exception as e:
-            print(f"  *** FAILED to start {label}: {e} — skipping", file=sys.stderr)
-            failed.append(label)
+            msg = str(e)
+            print(f"  *** FAILED to start {label}: {msg} — skipping", file=sys.stderr)
+            report.append((label, "SERVE_FAIL", msg))
             continue
+
         print(f"[{i}/{len(models)}] Benchmarking: {bench_key}")
-        try:
-            run_bench(bench_key)
-        except Exception as e:
-            print(f"  *** FAILED bench for {label}: {e} — skipping", file=sys.stderr)
-            failed.append(label)
+        exit_code = run_bench(bench_key)
+        if exit_code == 0:
+            report.append((label, "PASS", "all requests succeeded"))
+        elif exit_code == 1:
+            report.append((label, "PARTIAL", "some requests failed — check detailed JSON"))
+        else:
+            report.append((label, "FAIL", f"bench exited with code {exit_code}"))
 
     # Final cleanup
     compose_down_all(check=False)
 
-    section(f"SWEEP COMPLETE: {bench_key}")
-    if failed:
-        print(f"WARNING: {len(failed)} model(s) failed and were skipped:")
-        for f in failed:
-            print(f"  - {f}")
+    # ── Report card ──────────────────────────────────────────────────────
+    _print_report_card(bench_key, report)
     sys.stdout.flush()
     return
 
