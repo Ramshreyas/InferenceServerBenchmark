@@ -20,10 +20,20 @@ ResultsTab {
 }
 
 #results-sidebar {
-    width: 28;
+    width: 42;
     border-right: tall $primary-background;
     padding: 1;
     overflow-y: auto;
+}
+
+#result-tree {
+    height: auto;
+    max-height: 50%;
+}
+
+#results-model-filter {
+    height: auto;
+    max-height: 40%;
 }
 
 ResultsPane {
@@ -60,11 +70,18 @@ ResultsPane:focus {
 
 /* ── Bar chart area ─────────────────────────────────────────────── */
 
-#bar-chart-area {
+#charts-row {
+    layout: horizontal;
     height: auto;
     min-height: 10;
-    max-height: 24;
+    max-height: 28;
     margin: 1 0;
+}
+
+#chart-ttft, #chart-thru {
+    width: 1fr;
+    height: auto;
+    padding: 0 1;
 }
 
 /* ── Minimap ────────────────────────────────────────────────────── */

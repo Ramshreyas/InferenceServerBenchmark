@@ -206,6 +206,7 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 | `make probe [LABEL=]` | Auto-detect max_model_len for models |
 | `make serve LABEL=<label>` | Start vLLM for one model (no bench) |
 | `make prefetch` | Pre-download all models to HF cache |
+| `make tui` | Interactive results explorer (terminal UI) |
 | `make bench-sanity` | Run sanity against whatever is up |
 | `make bench-concurrency` | Run concurrency bench against whatever is up |
 | `make logs` | Tail vLLM logs |
@@ -237,6 +238,13 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 │   ├── concurrency_bench.yaml   ← Goal 1: 2-D prompt×output sweep, 10 concurrent, 200 req
 │   ├── context_stress.yaml      ← Context fitness: prompt sweep 512–65k, fixed output 256
 │   └── split_load.yaml          ← Goal 2: same 2-D sweep, 70/30 traffic split
+├── tui/
+│   ├── data.py                  ← Result discovery, sweep grouping, CSV merging
+│   ├── results_tab.py           ← Charts, minimap, scorecard, model filter
+│   ├── run_tab.py               ← (future) launch benchmarks from TUI
+│   ├── daemon_tab.py            ← (future) manage vLLM daemon
+│   └── styles.tcss              ← Textual CSS for layout
+├── tui.py                       ← TUI entry point
 ├── results/                     ← Output directory
 │   ├── *_detailed.json          ← Per-request metrics
 │   ├── *_summary.csv            ← Aggregated P50/P95/P99
@@ -297,6 +305,48 @@ rsync -avz server:~/InferenceServerBenchmark/results/ ./results/
 # Open analysis notebook
 cd notebooks && jupyter notebook
 ```
+
+---
+
+## TUI — Interactive Results Explorer
+
+A terminal UI for browsing and comparing benchmark results across models.
+
+```bash
+make tui
+```
+
+### Layout
+
+| Area | Description |
+|---|---|
+| **Left sidebar — Benchmark Runs** | Tree of all result files grouped by bench type. Concurrency bench runs from the same sweep are auto-grouped so you can view all models together. |
+| **Left sidebar — Model Filter** | Checkboxes to show/hide individual models in the charts. |
+| **Main pane — Charts** | Side-by-side bar charts: **TTFT** (lower is better) on the left, **Throughput tok/s** (higher is better) on the right. |
+| **Main pane — Minimap** | Grid showing which model wins each (prompt, output) cell. |
+| **Main pane — Scorecard** | Win counts per model across all grid cells. |
+
+### Navigation
+
+| Key | Action |
+|---|---|
+| `←` / `→` | Change output token tier |
+| `↑` / `↓` | Change prompt token tier |
+| `m` | Toggle TTFT between P95 and P50 |
+| `s` | Toggle scorecard visibility |
+
+### Sweep Grouping
+
+When `make concurrency-bench` runs all models, each model produces its own timestamped result files. The TUI automatically groups sequential runs (within 8 hours) into a single sweep entry. Clicking the sweep node merges all decision CSVs so you can compare every model side-by-side in the charts, minimap, and scorecard.
+
+Individual runs within a sweep can still be expanded and viewed separately.
+
+### Supported Bench Types
+
+- **⚡ Concurrency Bench** — dual charts + minimap + scorecard (sweep-grouped)
+- **🔀 Co-Deploy** — dual charts for (large + small) model pairs
+- **📏 Context Stress** — sweep-grouped like concurrency bench
+- **✅ Sanity Check** — simple table view
 
 ---
 

@@ -18,8 +18,11 @@ import pandas as pd
 
 from tui.data import (
     ResultSet,
+    SweepGroup,
     discover_results,
+    group_into_sweeps,
     load_decision_csv,
+    load_merged_decision_csvs,
     load_split_load_summary,
     load_sanity_summary,
     get_concurrency_grid,
@@ -39,63 +42,81 @@ BAR_FULL = "█"
 BAR_EMPTY = "░"
 BAR_WIDTH = 30
 
-METRICS = ["P95_ttft_ms", "P50_ttft_ms", "P95_itl_ms", "mean_throughput_tok_s"]
-METRIC_LABELS = {
+# TTFT variants the user can toggle between with 'm'
+TTFT_METRICS = ["P95_ttft_ms", "P50_ttft_ms"]
+TTFT_LABELS = {
     "P95_ttft_ms": "P95 TTFT (ms)",
     "P50_ttft_ms": "P50 TTFT (ms)",
-    "P95_itl_ms": "P95 ITL (ms)",
-    "mean_throughput_tok_s": "Throughput (tok/s)",
 }
+THRU_METRIC = "mean_throughput_tok_s"
+THRU_LABEL = "Throughput (tok/s)"
 
-# Co-deploy metrics
-CO_METRICS = ["large_P95_ttft_ms", "large_P50_ttft_ms", "large_P95_itl_ms", "combined_throughput_tok_s"]
-CO_METRIC_LABELS = {
+# Co-deploy equivalents
+CO_TTFT_METRICS = ["large_P95_ttft_ms", "large_P50_ttft_ms"]
+CO_TTFT_LABELS = {
     "large_P95_ttft_ms": "Large P95 TTFT (ms)",
     "large_P50_ttft_ms": "Large P50 TTFT (ms)",
-    "large_P95_itl_ms": "Large P95 ITL (ms)",
-    "combined_throughput_tok_s": "Combined Throughput (tok/s)",
 }
+CO_THRU_METRIC = "combined_throughput_tok_s"
+CO_THRU_LABEL = "Combined Throughput (tok/s)"
 
 
 def _short_model(name: str) -> str:
-    """Shorten 'org/Model-Name' → 'Model-Name', truncate at 24 chars."""
+    """Shorten 'org/Model-Name' → 'Model-Name', truncate at 30 chars."""
     if "/" in name:
         name = name.split("/")[-1]
-    if len(name) > 24:
-        name = name[:22] + "…"
+    if len(name) > 30:
+        name = name[:28] + "…"
     return name
-
-
-def _itl_badge(itl_val: float) -> Text:
-    """Return a coloured ITL badge."""
-    if pd.isna(itl_val):
-        return Text("? itl", style="dim")
-    val = round(itl_val, 0)
-    if val < 50:
-        return Text(f"✓ itl {val:.0f}ms", style="green")
-    elif val <= 100:
-        return Text(f"⚠ itl {val:.0f}ms", style="yellow")
-    else:
-        return Text(f"✗ itl {val:.0f}ms", style="red")
 
 
 def _bar_color(value: float, metric: str) -> str:
     """Choose bar colour based on metric thresholds."""
     if "throughput" in metric:
-        # Higher is better — reverse logic; just use cyan
         return "cyan"
-    if "itl" in metric:
-        if value < 50:
-            return "green"
-        elif value <= 100:
-            return "yellow"
-        return "red"
     # TTFT
     if value < 200:
         return "green"
     elif value <= 1000:
         return "yellow"
     return "red"
+
+
+NAME_PAD = 30  # column width for model names in bar charts
+
+
+def _render_chart(
+    sliced: pd.DataFrame,
+    metric: str,
+    label: str,
+    higher_better: bool,
+    unit: str,
+    fmt: str,
+    name_fn=None,
+) -> Text:
+    """Render a single bar chart as Rich Text."""
+    lines = Text()
+    direction = "higher is better" if higher_better else "lower is better"
+    lines.append(f"{label}  —  {direction}\n", style="bold")
+    lines.append("\n")
+
+    sorted_df = sliced.sort_values(
+        metric, ascending=not higher_better
+    ).reset_index(drop=True)
+
+    max_val = sorted_df[metric].max()
+    if max_val <= 0:
+        max_val = 1
+
+    for _, row in sorted_df.iterrows():
+        val = row[metric]
+        name = name_fn(row) if callable(name_fn) else _short_model(str(row.get("model", "")))
+        padded = f"  {name:<{NAME_PAD}}"
+        lines.append(padded)
+        lines.append_text(_render_bar(val, max_val, metric))
+        lines.append(f"  {val:{fmt}} {unit}\n")
+
+    return lines
 
 
 def _render_bar(value: float, max_val: float, metric: str) -> Text:
@@ -182,7 +203,7 @@ class ResultsTab(Widget):
         Binding("right", "next_output", "▶ Output", show=True),
         Binding("up", "prev_prompt", "▲ Prompt", show=True),
         Binding("down", "next_prompt", "▼ Prompt", show=True),
-        Binding("m", "cycle_metric", "Metric", show=True),
+        Binding("m", "cycle_metric", "P95/P50", show=True),
         Binding("s", "toggle_scorecard", "Scorecard", show=True),
     ]
 
@@ -215,10 +236,12 @@ class ResultsTab(Widget):
                     yield Static("—", id="prompt-val", classes="value")
                     yield Label("output:")
                     yield Static("—", id="output-val", classes="value")
-                    yield Label("metric:")
-                    yield Static("—", id="metric-val", classes="value")
+                    yield Label("TTFT:")
+                    yield Static("P95", id="metric-val", classes="value")
                     yield Static("", id="grid-pos")
-                yield Static("Select a benchmark run from the sidebar.", id="bar-chart-area")
+                with Horizontal(id="charts-row"):
+                    yield Static("Select a benchmark run from the sidebar.", id="chart-ttft")
+                    yield Static("", id="chart-thru")
                 yield Static("", id="minimap")
 
 
@@ -251,8 +274,20 @@ class ResultsTab(Widget):
             if bench_type in groups:
                 runs = groups[bench_type]
                 branch = tree.root.add(bench_labels.get(bench_type, bench_type))
-                for rs in runs:
-                    branch.add_leaf(rs.label, data=rs)
+
+                if bench_type in ("concurrency_bench", "context_stress"):
+                    sweeps = group_into_sweeps(runs)
+                    for sweep in sweeps:
+                        if len(sweep.result_sets) == 1:
+                            branch.add_leaf(sweep.result_sets[0].label, data=sweep.result_sets[0])
+                        else:
+                            sweep_node = branch.add(sweep.label, data=sweep)
+                            sweep_node.expand()
+                            for rs in sweep.result_sets:
+                                sweep_node.add_leaf(rs.label, data=rs)
+                else:
+                    for rs in runs:
+                        branch.add_leaf(rs.label, data=rs)
         
         # Handle any unknown bench types
         for bench_type, runs in groups.items():
@@ -264,9 +299,42 @@ class ResultsTab(Widget):
     # ── Sidebar selection ────────────────────────────────────────────────
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
-        rs: ResultSet | None = event.node.data
-        if rs is None:
+        node_data = event.node.data
+        if node_data is None:
             return
+
+        # ── SweepGroup: merge all decision CSVs in the sweep ─────────
+        if isinstance(node_data, SweepGroup):
+            sweep: SweepGroup = node_data
+            self._current_rs = None
+            self._is_codeploy = False
+
+            selector = self.query_one("#results-model-filter", SelectionList)
+            selector.clear_options()
+
+            csv_paths = sweep.decision_csvs
+            if not csv_paths:
+                self.query_one("#bar-chart-area", Static).update(
+                    "No decision CSV data found for this sweep."
+                )
+                return
+
+            self._df = load_merged_decision_csvs(csv_paths)
+            self._prompts, self._outputs = get_concurrency_grid(self._df)
+
+            models = get_models_in_decision(self._df)
+            options = [(_short_model(m), m) for m in models]
+            selector.add_options(options)
+            selector.select_all()
+
+            self.prompt_idx = 0
+            self.output_idx = 0
+            self.metric_idx = 0
+            self._render_tuner()
+            return
+
+        # ── Single ResultSet ─────────────────────────────────────────
+        rs: ResultSet = node_data
         self._current_rs = rs
         self._is_codeploy = rs.bench_type == "split_load"
 
@@ -337,7 +405,8 @@ class ResultsTab(Widget):
                 else:
                     cells.append(str(val))
             table.add_row(*cells)
-        self.query_one("#bar-chart-area", Static).update(table)
+        self.query_one("#chart-ttft", Static).update(table)
+        self.query_one("#chart-thru", Static).update("")
         self.query_one("#minimap", Static).update("")
         self.query_one("#scorecard", Static).update("")
         for wid in ("prompt-val", "output-val", "metric-val", "grid-pos"):
@@ -365,75 +434,68 @@ class ResultsTab(Widget):
         cur_prompt = self._prompts[self.prompt_idx % len(self._prompts)]
         cur_output = self._outputs[self.output_idx % len(self._outputs)]
 
-        metrics = CO_METRICS if self._is_codeploy else METRICS
-        metric_labels = CO_METRIC_LABELS if self._is_codeploy else METRIC_LABELS
-        metric = metrics[self.metric_idx % len(metrics)]
+        # Resolve the two metrics for the dual-chart view
+        if self._is_codeploy:
+            ttft_variants = CO_TTFT_METRICS
+            ttft_labels = CO_TTFT_LABELS
+            thru_metric = CO_THRU_METRIC
+            thru_label = CO_THRU_LABEL
+        else:
+            ttft_variants = TTFT_METRICS
+            ttft_labels = TTFT_LABELS
+            thru_metric = THRU_METRIC
+            thru_label = THRU_LABEL
+
+        ttft_metric = ttft_variants[self.metric_idx % len(ttft_variants)]
+        ttft_label = ttft_labels[ttft_metric]
 
         # Update controls
         self.query_one("#prompt-val", Static).update(f"◀ {cur_prompt} ▶")
         self.query_one("#output-val", Static).update(f"◀ {cur_output} ▶")
-        self.query_one("#metric-val", Static).update(metric_labels.get(metric, metric))
+        self.query_one("#metric-val", Static).update(ttft_label.split("(")[0].strip())
 
         total_cells = len(self._prompts) * len(self._outputs)
         cell_num = self.prompt_idx * len(self._outputs) + self.output_idx + 1
         self.query_one("#grid-pos", Static).update(f"[{cell_num}/{total_cells}]")
 
-        # Slice data for current cell from FILTERED dataframe
+        # Slice data for current cell from FILTERED dataframe (sort by TTFT)
         if self._is_codeploy:
-            sliced = slice_split_load(filtered_df, cur_prompt, cur_output, metric)
+            sliced = slice_split_load(filtered_df, cur_prompt, cur_output, ttft_metric)
         else:
-            sliced = slice_decision(filtered_df, cur_prompt, cur_output, metric)
+            sliced = slice_decision(filtered_df, cur_prompt, cur_output, ttft_metric)
 
-        # ── Bar chart ────────────────────────────────────────────────────
+        # ── Dual bar charts (side by side) ──────────────────────────────────
         if sliced.empty:
-            self.query_one("#bar-chart-area", Static).update(
+            self.query_one("#chart-ttft", Static).update(
                 "No data for this (prompt, output) combination (or all models filtered out)."
             )
+            self.query_one("#chart-thru", Static).update("")
         else:
-            higher_better = "throughput" in metric
-            if higher_better:
-                sliced = sliced.sort_values(metric, ascending=False).reset_index(drop=True)
+            if self._is_codeploy:
+                name_fn = lambda row: _short_model(row["large_model"]) + " + " + _short_model(row["small_model"])
+            else:
+                name_fn = lambda row: _short_model(row["model"])
 
-            max_val = sliced[metric].max()
-            if max_val <= 0:
-                max_val = 1
+            ttft_chart = _render_chart(
+                sliced, ttft_metric, ttft_label,
+                higher_better=False, unit="ms", fmt=">8.0f",
+                name_fn=name_fn,
+            )
+            thru_chart = _render_chart(
+                sliced, thru_metric, thru_label,
+                higher_better=True, unit="tok/s", fmt=">8.1f",
+                name_fn=name_fn,
+            )
+            self.query_one("#chart-ttft", Static).update(ttft_chart)
+            self.query_one("#chart-thru", Static).update(thru_chart)
 
-            # Build rich output line-by-line
-            lines = Text()
-            header_text = metric_labels.get(metric, metric)
-            direction = "higher is better" if higher_better else "lower is better"
-            lines.append(f"{header_text} — {direction}\n\n", style="bold")
-
-            for _, row in sliced.iterrows():
-                value = row[metric]
-                if self._is_codeploy:
-                    name = _short_model(row["large_model"]) + " + " + _short_model(row["small_model"])
-                    itl_col = "small_P95_itl_ms"
-                else:
-                    name = _short_model(row["model"])
-                    itl_col = "P95_itl_ms"
-
-                # Pad name to 28 chars
-                padded = f"{name:<28}"
-                lines.append(padded)
-                lines.append_text(_render_bar(value, max_val, metric))
-                lines.append(f"  {value:>8.0f}  ")
-
-                if itl_col in row.index:
-                    lines.append_text(_itl_badge(row[itl_col]))
-
-                lines.append("\n")
-
-            self.query_one("#bar-chart-area", Static).update(lines)
-
-        # ── Minimap ──────────────────────────────────────────────────────
+        # ── Minimap (uses TTFT metric for "who wins") ────────────────────
         if not self._is_codeploy and self._df is not None:
-            # Use filtered_df for minimap/scorecard to reflect the filter
             if filtered_df.empty:
                 self.query_one("#minimap", Static).update("No data selected.")
                 self.query_one("#scorecard", Static).update("")
             else:
-                win_board = compute_win_board(filtered_df, metric)
+                win_board = compute_win_board(filtered_df, ttft_metric)
                 minimap = _minimap_rich(
                     win_board, self._prompts, self._outputs, cur_prompt, cur_output
                 )
@@ -441,7 +503,7 @@ class ResultsTab(Widget):
 
                 # ── Scorecard ────────────────────────────────────────────────
                 if self.show_scorecard:
-                    sc = scorecard(filtered_df, metric)
+                    sc = scorecard(filtered_df, ttft_metric)
                     parts = []
                     for model, wins, total in sc:
                         parts.append(f"{model} wins {wins}/{total}")
@@ -478,8 +540,8 @@ class ResultsTab(Widget):
             self._render_tuner()
 
     def action_cycle_metric(self) -> None:
-        metrics = CO_METRICS if self._is_codeploy else METRICS
-        self.metric_idx = (self.metric_idx + 1) % len(metrics)
+        ttft_variants = CO_TTFT_METRICS if self._is_codeploy else TTFT_METRICS
+        self.metric_idx = (self.metric_idx + 1) % len(ttft_variants)
         self._render_tuner()
 
     def action_toggle_scorecard(self) -> None:
