@@ -38,15 +38,15 @@ models:
   # Dense: all weights active. Sparse MoE: all weights load into VRAM regardless
   # of active-param count — VRAM requirement is determined by total param count.
 
-  - name: Qwen/Qwen3.5-122B-A10B-FP8
-    label: qwen35-122b-a10b-fp8
+  - name: cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit
+    label: qwen35-122b-a10b-awq4
     role: large
-    quantization: none          # Weights are already FP8 — vLLM auto-detects; do NOT pass --quantization fp8
+    quantization: none          # Pre-quantized AWQ 4-bit (compressed-tensors) — vLLM auto-detects; do NOT pass --quantization
     gpu_memory_util: 0.90
-    tensor_parallel: 2          # ~125 GB at FP8 — needs 2× GPUs
-    topology: sparse_moe        # 125B total (qwen3_5_moe), 10B active per token
-    loaded_gb: 125
-    vllm_extra_flags: "--language-model-only"   # Qwen3.5 is multimodal; skip vision encoder for text-only benchmarks
+    tensor_parallel: 1          # ~61 GB at AWQ-4bit — fits single 96 GB GPU
+    topology: sparse_moe        # 122B total (qwen3_5_moe), 10B active per token
+    loaded_gb: 65
+    vllm_extra_flags: "--language-model-only --enforce-eager --reasoning-parser qwen3"   # enforce-eager: CUDA graphs crash on hybrid DeltaNet+MoE; reasoning-parser required for Qwen3.5
 
   - name: openai/gpt-oss-120b
     label: gpt-oss-120b
@@ -76,7 +76,7 @@ models:
     tensor_parallel: 1
     topology: dense             # 28B dense (qwen3_5), multimodal image-text-to-text
     loaded_gb: 28
-    vllm_extra_flags: "--language-model-only"   # Qwen3.5 is multimodal; skip vision encoder for text-only benchmarks
+    vllm_extra_flags: "--language-model-only --reasoning-parser qwen3"   # Qwen3.5: skip vision encoder; reasoning-parser required for think-block parsing
 
   - name: Qwen/Qwen3.5-35B-A3B
     label: qwen35-35b-a3b
@@ -86,7 +86,7 @@ models:
     tensor_parallel: 1
     topology: sparse_moe        # 36B total (qwen3_5_moe), 3B active per token
     loaded_gb: 36
-    vllm_extra_flags: "--language-model-only"   # Qwen3.5 is multimodal; skip vision encoder for text-only benchmarks
+    vllm_extra_flags: "--language-model-only --reasoning-parser qwen3"   # Qwen3.5: skip vision encoder; reasoning-parser required for think-block parsing
 
   - name: zai-org/GLM-4.7-Flash
     label: glm-47-flash
