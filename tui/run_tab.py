@@ -33,7 +33,6 @@ class RunTab(Widget):
             [
                 ("Concurrency Bench", "concurrency-bench"),
                 ("Co-Deploy", "co-deploy"),
-                ("Context Stress", "context-stress"),
                 ("Sanity Check", "sanity"),
             ],
             id="bench-type",

@@ -82,21 +82,18 @@ make prefetch     # downloads all models in models.yaml to HF cache
 ### 4. Validate Stack
 
 ```bash
-make sanity LABEL=mistral-7b
+make sanity LABEL=ministral3-8b
 ```
 
-Starts vLLM with Mistral 7B, runs 10 test requests, prints TTFT / ITL / throughput.
+Starts vLLM with Ministral-3 8B, runs 10 test requests, prints TTFT / ITL / throughput.
 
 ### 5. Run Benchmarks
 
 ```bash
-# Step 1 — Context fitness check (run first)
-make context-stress
-
-# Step 2 — Goal 1: Find the best single model
+# Step 1 — Goal 1: Find the best single model
 make concurrency-bench
 
-# Step 3 — Goal 2: Find the best co-deploy pair
+# Step 2 — Goal 2: Find the best co-deploy pair
 make co-deploy
 ```
 
@@ -108,23 +105,23 @@ Edit `models.yaml`:
 
 ```yaml
 models:
-  - name: Qwen/QwQ-32B
-    label: qwq-32b
+  - name: openai/gpt-oss-120b
+    label: gpt-oss-120b
     role: large                  # large | small
-    quantization: fp8
-    gpu_memory_util: 0.85        # for solo benchmarks
+    quantization: none           # Pre-quantized mxfp4
+    gpu_memory_util: 0.95        # for solo benchmarks
     tensor_parallel: 1
     topology: dense
-    loaded_gb: 33                # approximate VRAM when loaded
+    loaded_gb: 60                # approximate VRAM when loaded
 
-  - name: Qwen/Qwen3-8B
-    label: qwen3-8b
+  - name: mistralai/Ministral-3-8B-Instruct-2512
+    label: ministral3-8b
     role: small
-    quantization: none
+    quantization: none           # Pre-quantized FP8
     gpu_memory_util: 0.85
     tensor_parallel: 1
     topology: dense
-    loaded_gb: 16
+    loaded_gb: 9
 ```
 
 | Field | Options | Notes |
@@ -137,6 +134,7 @@ models:
 | `tensor_parallel` | integer | 1 for single-GPU |
 | `topology` | `dense`, `sparse_moe` | MoE models load all expert weights into VRAM |
 | `loaded_gb` | integer | Approximate loaded VRAM; used to auto-compute co-deploy memory splits |
+| `vllm_extra_flags` | string (optional) | Additional vLLM CLI flags passed verbatim (e.g. `--language-model-only`) |
 
 ### Co-deploy Memory Allocation
 
@@ -155,40 +153,29 @@ models:
 > "Is the stack wired up correctly?"
 
 ```bash
-make sanity LABEL=mistral-7b
+make sanity LABEL=ministral3-8b
 ```
 
 10 sequential requests, short completions. Run first against any new model.
 
-### 1. Context Stress (fitness check)
-
-> "Does this model collapse at longer prompts?"
-
-```bash
-make context-stress                   # all models
-make context-stress LABEL=qwq-32b    # one model
-```
-
-Profiles TTFT/ITL degradation from 512 to 65k tokens at fixed output length (256) and concurrency 10. A model whose P95 TTFT at your workload prompt length exceeds 3× its 512-token baseline is flagged as context-sensitive.
-
-### 2. Goal 1 — Single-Tenant Concurrency Bench
+### 1. Goal 1 — Single-Tenant Concurrency Bench
 
 > "Which model has the best P95 TTFT under sustained 10-user load?"
 
 ```bash
-make concurrency-bench                   # all models
-make concurrency-bench LABEL=qwq-32b    # one model
+make concurrency-bench                        # all models
+make concurrency-bench LABEL=gpt-oss-120b    # one model
 ```
 
 2-D sweep across `prompt_token_lengths × output_token_lengths` with fixed queue depth of 10. 200 requests per point. Produces a `_decision.csv` ranking table.
 
-### 3. Goal 2 — Co-Deploy Split-Load
+### 2. Goal 2 — Co-Deploy Split-Load
 
 > "Which (large, small) pair is best when sharing the GPU?"
 
 ```bash
-make co-deploy                                                       # all viable pairs
-make co-deploy LABEL_LARGE=qwq-32b LABEL_SMALL=qwen3-8b            # one pair
+make co-deploy                                                              # all viable pairs
+make co-deploy LABEL_LARGE=gpt-oss-120b LABEL_SMALL=ministral3-8b          # one pair
 ```
 
 Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D sweep as Goal 1. Per-endpoint P95 TTFT/ITL reported independently.
@@ -200,7 +187,6 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 | Target | Description |
 |---|---|
 | `make sanity [LABEL=]` | Quick 10-request validation |
-| `make context-stress [LABEL=]` | Context fitness check (run before Goal 1) |
 | `make concurrency-bench [LABEL=]` | Goal 1 — rank single-tenant models |
 | `make co-deploy [LABEL_LARGE= LABEL_SMALL=]` | Goal 2 — rank co-deploy pairs |
 | `make probe [LABEL=]` | Auto-detect max_model_len for models |
@@ -228,7 +214,7 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 ├── Dockerfile                   ← bench-runner / co-runner image
 ├── core/
 │   ├── sweep.py                 ← Iterates models.yaml, drives docker compose
-│   ├── bench_runner.py          ← Single-model benchmark (sanity, concurrency, context stress)
+│   ├── bench_runner.py          ← Single-model benchmark (sanity, concurrency)
 │   ├── co_deploy_runner.py      ← Split-load benchmark against two endpoints (Goal 2)
 │   ├── prefetch.py              ← Pre-downloads all models to HF cache
 │   ├── telemetry.py             ← GPU monitoring via nvidia-smi
@@ -236,12 +222,12 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 ├── configs/
 │   ├── sanity_check.yaml        ← 10 sequential requests, quick validation
 │   ├── concurrency_bench.yaml   ← Goal 1: 2-D prompt×output sweep, 10 concurrent, 200 req
-│   ├── context_stress.yaml      ← Context fitness: prompt sweep 512–65k, fixed output 256
 │   └── split_load.yaml          ← Goal 2: same 2-D sweep, 70/30 traffic split
 ├── tui/
 │   ├── data.py                  ← Result discovery, sweep grouping, CSV merging
 │   ├── results_tab.py           ← Charts, minimap, scorecard, model filter
 │   ├── run_tab.py               ← (future) launch benchmarks from TUI
+│   ├── daemon.py                ← Background process management
 │   ├── daemon_tab.py            ← (future) manage vLLM daemon
 │   └── styles.tcss              ← Textual CSS for layout
 ├── tui.py                       ← TUI entry point
@@ -261,8 +247,6 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 |---|---|
 | `sanity_check_{ts}_detailed.json` | Raw per-request results |
 | `sanity_check_{ts}_summary.csv` | Basic stats |
-| `context_stress_{ts}_detailed.json` | Per-request, tagged with `prompt_tokens_target` |
-| `context_stress_{ts}_summary.csv` | Per-model degradation curve across prompt tiers |
 | `concurrency_bench_{ts}_detailed.json` | Per-request, all raw metrics |
 | `concurrency_bench_{ts}_summary.csv` | Stats grouped by `(model, prompt, output)` |
 | `concurrency_bench_{ts}_decision.csv` | **Goal 1 ranking table** — P95 TTFT/ITL per tier |
@@ -282,9 +266,8 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 
 ### Goal 1 — Best Single Model
 
-1. From `context_stress_*_summary.csv`, flag models whose P95 TTFT at your workload prompt length > 3× their 512-token baseline.
-2. From `concurrency_bench_*_decision.csv`, select the `(prompt, output)` row matching your workload.
-3. Rank by `P95_ttft_ms` ascending. Winner must also have `P95_itl_ms < 100 ms`.
+1. From `concurrency_bench_*_decision.csv`, select the `(prompt, output)` row matching your workload.
+2. Rank by `P95_ttft_ms` ascending. Winner must also have `P95_itl_ms < 100 ms`.
 
 ### Goal 2 — Best Co-Deploy Pair
 
@@ -345,7 +328,6 @@ Individual runs within a sweep can still be expanded and viewed separately.
 
 - **⚡ Concurrency Bench** — dual charts + minimap + scorecard (sweep-grouped)
 - **🔀 Co-Deploy** — dual charts for (large + small) model pairs
-- **📏 Context Stress** — sweep-grouped like concurrency bench
 - **✅ Sanity Check** — simple table view
 
 ---

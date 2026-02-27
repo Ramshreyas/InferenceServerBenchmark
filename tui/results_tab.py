@@ -263,19 +263,18 @@ class ResultsTab(Widget):
         bench_labels = {
             "concurrency_bench": "⚡ Concurrency Bench",
             "split_load": "🔀 Co-Deploy",
-            "context_stress": "📏 Context Stress",
             "sanity_check": "✅ Sanity Check",
         }
         
         # Enforce specific order
-        bench_order = ["concurrency_bench", "split_load", "context_stress", "sanity_check"]
+        bench_order = ["concurrency_bench", "split_load", "sanity_check"]
 
         for bench_type in bench_order:
             if bench_type in groups:
                 runs = groups[bench_type]
                 branch = tree.root.add(bench_labels.get(bench_type, bench_type))
 
-                if bench_type in ("concurrency_bench", "context_stress"):
+                if bench_type in ("concurrency_bench",):
                     sweeps = group_into_sweeps(runs)
                     for sweep in sweeps:
                         if len(sweep.result_sets) == 1:

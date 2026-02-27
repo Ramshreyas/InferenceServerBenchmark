@@ -2,7 +2,7 @@
 # models.yaml  —  THE ONLY FILE YOU NEED TO EDIT
 # =============================================================================
 # List every model you want to benchmark. `make concurrency-bench`,
-# `make context-stress`, and `make co-deploy` iterate over this list.
+# and `make co-deploy` iterate over this list.
 #
 # Fields per model:
 #   name            HuggingFace model ID

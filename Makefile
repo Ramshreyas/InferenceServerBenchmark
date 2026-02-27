@@ -8,8 +8,6 @@
 #  2. Run one of the targets below.
 #
 #   make sanity LABEL=mistral-7b          Quick 10-request smoke test
-#   make context-stress                   Context fitness check (all models)
-#   make context-stress LABEL=qwq-32b     Context fitness check (one model)
 #   make concurrency-bench                Goal 1 — rank single-tenant models
 #   make concurrency-bench LABEL=qwq-32b  Goal 1 — one model
 #   make co-deploy                        Goal 2 — all viable (large, small) pairs
@@ -45,9 +43,6 @@ LABEL_SMALL  ?=   # filter small-role model (co-deploy)
 
 sanity:
 	$(PYTHON) core/sweep.py --bench sanity $(if $(LABEL),--label $(LABEL),)
-
-context-stress:
-	$(PYTHON) core/sweep.py --bench context-stress $(if $(LABEL),--label $(LABEL),)
 
 concurrency-bench:
 	$(PYTHON) core/sweep.py --bench concurrency-bench $(if $(LABEL),--label $(LABEL),)
@@ -115,6 +110,6 @@ tui:
 	$(PYTHON) tui.py
 
 .PHONY: \
-	sanity context-stress concurrency-bench co-deploy probe serve \
+	sanity concurrency-bench co-deploy probe serve \
 	bench-sanity bench-concurrency \
 	logs status stop results gpu-monitor prefetch tui

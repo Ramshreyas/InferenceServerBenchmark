@@ -44,7 +44,7 @@ def models_by_role(role: str) -> list[dict]:
 @dataclass
 class ResultSet:
     """A group of files produced by a single benchmark run."""
-    bench_type: str        # concurrency_bench | split_load | sanity_check | context_stress
+    bench_type: str        # concurrency_bench | split_load | sanity_check
     timestamp: str         # e.g. 20260225_162047
     decision_csv: str | None = None
     summary_csv: str | None = None

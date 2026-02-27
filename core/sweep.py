@@ -4,7 +4,6 @@ Sweep runner  —  reads models.yaml, serves each model, runs benchmarks.
 
 Run from repo root:
     python core/sweep.py --bench concurrency-bench
-    python core/sweep.py --bench context-stress --label qwq-32b
     python core/sweep.py --bench sanity --label mistral-7b
     python core/sweep.py --bench co-deploy --label-large gpt-oss-120b --label-small qwen3-8b
 """
@@ -27,7 +26,6 @@ import yaml
 BENCH_CONFIGS = {
     "sanity":            "/configs/sanity_check.yaml",
     "concurrency-bench": "/configs/concurrency_bench.yaml",
-    "context-stress":    "/configs/context_stress.yaml",
     # co-deploy uses a separate code path (co_deploy_sweep)
 }
 
@@ -253,9 +251,6 @@ def context_window_check(model: dict, bench_key: str) -> bool:
     cfg = load_config(bench_key)
     prompt_lens = cfg.get("prompt_token_lengths", [0])
     output_lens = cfg.get("output_token_lengths", [0])
-    # For context-stress the output is a fixed scalar under requests.output_tokens
-    if not output_lens or output_lens == [0]:
-        output_lens = [cfg.get("requests", {}).get("output_tokens", 0)]
 
     min_needed = min(prompt_lens) + min(output_lens)
     if min_needed > int(max_len):
@@ -554,7 +549,7 @@ def main():
         label = model.get("label", model["name"].split("/")[-1])
 
         # Context-window fitness check
-        if bench_key in ("concurrency-bench", "context-stress"):
+        if bench_key in ("concurrency-bench",):
             if not context_window_check(model, bench_key):
                 max_len = model.get("max_model_len", "?")
                 detail = f"max_model_len={max_len} too small for {bench_key}"

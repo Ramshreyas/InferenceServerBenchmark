@@ -66,28 +66,7 @@ The winning model is the one with the best P95 TTFT at the `(prompt_tokens, outp
 
 ---
 
-### 4.3 Context Stress Benchmark (`configs/context_stress.yaml`)
-
-**Purpose:** Profile how P95 TTFT and ITL degrade as prompt length grows from short to near each model's `max_model_len`. This is not a ranking benchmark — it is a fitness check run before Goal 1. A model that is fast at short context but degrades catastrophically at medium context is unsuitable for a mixed workload and should be dropped from consideration.
-
-**Design decisions:**
-
-- **Fixed output tokens (256).** Isolates prefill pressure; generation length is held constant.
-- **Fixed concurrency of 10.** Same as Goal 1 so degradation is measured under realistic queue pressure.
-- **Prompt length sweep: `[512, 2048, 8192, 32768, 65536]`.** Any value where `prompt_tokens + 256 > model.max_model_len` is skipped automatically.
-- **100 requests per point.** Fewer than Goal 1; this is a profile, not a ranking. P95 stability is sufficient.
-
-**Decision output:** For each model, a degradation curve:
-
-```
-model | prompt_tokens | P50_ttft_ms | P95_ttft_ms | P99_ttft_ms | P50_itl_ms | P95_itl_ms
-```
-
-A model is context-sensitive if its P95 TTFT at any prompt tier present in your workload exceeds 3× its short-context (512-token) P95 TTFT. Such models are flagged in the Goal 1 decision table but not automatically excluded — the flag informs the final call.
-
----
-
-### 4.4 Goal 2 — Co-Deploy Split-Load Benchmark (`configs/split_load.yaml`)
+### 4.3 Goal 2 — Co-Deploy Split-Load Benchmark (`configs/split_load.yaml`)
 
 **Purpose:** Find which (large, small) model pair delivers the best user-facing latency across 10 concurrent users when both models run simultaneously on the same GPU.
 
@@ -131,7 +110,6 @@ The winning pair is the one with the best P95 TTFT on the large endpoint at the 
 | File | Status | Notes |
 |---|---|---|
 | `configs/concurrency_bench.yaml` | **New** | Goal 1 benchmark config |
-| `configs/context_stress.yaml` | **New** | Context fitness check config |
 | `configs/split_load.yaml` | **New** | Goal 2 benchmark config |
 | `models.yaml` | **Modified** | Add `role: large \| small` field to each entry |
 | `docker-compose.yml` | **Modified** | Rename `vllm` → `vllm-large`; add `vllm-small` on port 8001; add `co-runner` service |
@@ -230,22 +208,7 @@ mean_throughput_tok_s, total_tokens_generated
 
 ---
 
-### 6.3 `configs/context_stress.yaml` — new file
-
-```yaml
-bench: context-stress
-requests:
-  num_requests: 100
-  concurrency: 10
-  output_tokens: 256
-prompt_token_lengths: [512, 2048, 8192, 32768, 65536]
-```
-
-`sweep.py` skips any `prompt_tokens` value where `prompt_tokens + output_tokens > model.max_model_len`. Results are saved as `context_stress_{ts}_detailed.json` and `context_stress_{ts}_summary.csv`.
-
----
-
-### 6.4 `core/co_deploy_runner.py` — new file
+### 6.3 `core/co_deploy_runner.py` — new file
 
 Entry point: `python core/co_deploy_runner.py --config /configs/split_load.yaml`
 
@@ -281,7 +244,7 @@ combined_throughput_tok_s
 
 ---
 
-### 6.5 `core/sweep.py` — changes
+### 6.4 `core/sweep.py` — changes
 
 **`BENCH_CONFIGS` dict — replace entirely:**
 
@@ -289,7 +252,6 @@ combined_throughput_tok_s
 BENCH_CONFIGS = {
     "sanity":            "/configs/sanity_check.yaml",
     "concurrency-bench": "/configs/concurrency_bench.yaml",
-    "context-stress":    "/configs/context_stress.yaml",
     # co-deploy uses a separate code path (co_deploy_sweep)
 }
 ```
@@ -377,7 +339,7 @@ def co_deploy_sweep(models, label_large=None, label_small=None):
 
 ---
 
-### 6.6 `docker-compose.yml` — service changes
+### 6.5 `docker-compose.yml` — service changes
 
 Rename the existing `vllm` service to `vllm-large`. No other changes to it.
 
@@ -470,15 +432,11 @@ make prefetch                       # Download all models in models.yaml
 # 1. Validate stack
 make sanity LABEL=<any-model>       # Quick 10-request smoke test
 
-# 2. Context fitness check (run before Goal 1)
-make context-stress                 # All models in models.yaml
-make context-stress LABEL=qwq-32b   # One model only
-
-# 3. Goal 1 — best single-tenant model
+# 2. Goal 1 — best single-tenant model
 make concurrency-bench              # All models in models.yaml
 make concurrency-bench LABEL=qwq-32b  # One model only
 
-# 4. Goal 2 — best co-deploy pair
+# 3. Goal 2 — best co-deploy pair
 make co-deploy                      # All viable (large, small) pairs
 make co-deploy LABEL_LARGE=gpt-oss-120b LABEL_SMALL=qwen3-8b  # One pair
 
@@ -500,8 +458,6 @@ All files land in `results/` with timestamps.
 |---|---|
 | `sanity_check_{ts}_detailed.json` | Raw per-request results (unchanged) |
 | `sanity_check_{ts}_summary.csv` | Basic stats (unchanged) |
-| `context_stress_{ts}_detailed.json` | One row per request; tagged with `prompt_tokens_target` |
-| `context_stress_{ts}_summary.csv` | Per-model degradation curve across prompt tiers |
 | `concurrency_bench_{ts}_detailed.json` | One row per request; all raw metrics |
 | `concurrency_bench_{ts}_summary.csv` | Full stats grouped by `(model, prompt_tokens_target, output_tokens_target)` |
 | `concurrency_bench_{ts}_decision.csv` | **Primary Goal 1 artefact.** P95 TTFT/ITL ranking table across prompt × output tiers. |
@@ -514,8 +470,6 @@ All files land in `results/` with timestamps.
 ## 9. Decision Framework
 
 ### Goal 1 — Best Single-Tenant Model
-
-**Step 0 — Context fitness check.** From `context_stress_*_summary.csv`, flag any model whose P95 TTFT at your expected prompt length exceeds 3× its 512-token baseline. These models are context-sensitive — note the flag but do not automatically exclude them; factor it into the final call.
 
 **Step 1 — Rank on Goal 1 data.** From `concurrency_bench_*_decision.csv`, select rows where `prompt_tokens` matches your expected workload prompt length and `output_tokens` matches your expected completion length:
 
@@ -610,7 +564,7 @@ Provides a form-based interface to launch benchmarks without memorising `make` t
 #### Form Fields
 | Field | Widget | Options |
 |-------|--------|---------|
-| **Benchmark type** | `Select` | `sanity`, `context-stress`, `concurrency-bench`, `co-deploy` |
+| **Benchmark type** | `Select` | `sanity`, `concurrency-bench`, `co-deploy` |
 | **Model filter** (single-model) | `Select` | Labels from `models.yaml`, or "All" |
 | **Large model** (co-deploy) | `Select` | Labels with `role: large` |
 | **Small model** (co-deploy) | `Select` | Labels with `role: small` |

@@ -97,7 +97,7 @@ services:
     networks:
       - inference-net
 
-  # ── Benchmark runner (single-model: sanity, concurrency-bench, context-stress)
+  # ── Benchmark runner (single-model: sanity, concurrency-bench)
   bench-runner:
     build:
       context: .

@@ -16,7 +16,7 @@ model:
   name: "auto"  # Auto-detected from the running vLLM server
 
 # 2-D sweep grid — each (prompt, output) pair that fits in max_model_len is run
-prompt_token_lengths: [512, 4096, 16384]
+prompt_token_lengths: [512, 2048, 4096, 8192, 16384]
 output_token_lengths: [256, 512, 1024, 2048, 4096]
 
 requests:

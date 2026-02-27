@@ -2,7 +2,7 @@
 """
 Benchmark runner for vLLM inference server.
 
-Supports three benchmark modes, auto-detected from the YAML config:
+Supports two benchmark modes, auto-detected from the YAML config:
 
   1. **Sanity check** (legacy) — config has `context_lengths`.
      Sequential requests, low concurrency. Unchanged from original.
@@ -10,10 +10,6 @@ Supports three benchmark modes, auto-detected from the YAML config:
   2. **Concurrency bench** (Goal 1) — config has `output_token_lengths`
      AND `prompt_token_lengths`.  2-D sweep grid of (prompt, output) with
      a fixed-depth ThreadPoolExecutor (queue always full).
-
-  3. **Context stress** — config has `prompt_token_lengths` and
-     `requests.output_tokens` (scalar, not a list).  1-D sweep of prompt
-     lengths at fixed output tokens and concurrency.
 """
 
 import argparse
@@ -200,7 +196,7 @@ class BenchmarkRunner:
                 result.update(extra_tags)
             return result
 
-    # ── Concurrent sweep (Goal 1 / context-stress) ───────────────────────────
+    # ── Concurrent sweep (Goal 1) ────────────────────────────────────────────
 
     def _run_concurrent_sweep(
         self,
@@ -295,7 +291,6 @@ class BenchmarkRunner:
         has_context_lengths = "context_lengths" in self.config
         has_output_token_lengths = "output_token_lengths" in self.config
         has_prompt_token_lengths = "prompt_token_lengths" in self.config
-        has_fixed_output = "output_tokens" in self.config.get("requests", {})
 
         # Mode 1: Legacy sanity check
         if has_context_lengths:
@@ -307,15 +302,9 @@ class BenchmarkRunner:
             self._run_concurrent_mode(server_max_len)
             return
 
-        # Mode 3: Context stress (1-D prompt sweep, fixed output)
-        if has_prompt_token_lengths and has_fixed_output:
-            self._run_context_stress_mode(server_max_len)
-            return
-
         raise ValueError(
             "Could not determine benchmark mode from config. "
-            "Expected one of: context_lengths, output_token_lengths + prompt_token_lengths, "
-            "or prompt_token_lengths + requests.output_tokens."
+            "Expected one of: context_lengths, or output_token_lengths + prompt_token_lengths."
         )
 
     # ── Mode 1: Legacy (sanity check) ────────────────────────────────────────
@@ -405,61 +394,6 @@ class BenchmarkRunner:
 
         self._save_results(all_results)
         self._save_decision_csv(all_results)
-        self._print_summary(all_results)
-        self.logger.info(f"\n✓ Benchmark complete. Results saved to {self.output_dir}")
-
-    # ── Mode 3: Context stress (1-D prompt sweep) ────────────────────────────
-
-    def _run_context_stress_mode(self, server_max_len: int):
-        prompt_lengths = self.config["prompt_token_lengths"]
-        cfg = self.config["requests"]
-        output_tokens = cfg["output_tokens"]
-        num_requests = cfg["num_requests"]
-        concurrency = cfg["concurrency"]
-
-        if self.telemetry:
-            self.telemetry.start_collection(
-                interval=self.config["telemetry"]["sample_interval_sec"]
-            )
-
-        all_results: list[Dict] = []
-
-        for prompt_tokens in prompt_lengths:
-            total_needed = prompt_tokens + output_tokens
-            if total_needed > server_max_len:
-                self.logger.warning(
-                    f"SKIP prompt={prompt_tokens} — "
-                    f"total {total_needed:,} > max_model_len {server_max_len:,}"
-                )
-                all_results.append(
-                    {
-                        "model": self._model_name,
-                        "prompt_tokens_target": prompt_tokens,
-                        "output_tokens_target": output_tokens,
-                        "skipped": True,
-                        "skip_reason": f"prompt+output ({total_needed:,}) > max_model_len ({server_max_len:,})",
-                    }
-                )
-                continue
-
-            self.logger.info(
-                f"\n{'='*60}\n"
-                f"  Context stress: prompt={prompt_tokens}  output={output_tokens}  "
-                f"concurrency={concurrency}  requests={num_requests}\n"
-                f"{'='*60}"
-            )
-            results = self._run_concurrent_sweep(
-                prompt_tokens=prompt_tokens,
-                output_tokens=output_tokens,
-                num_requests=num_requests,
-                concurrency=concurrency,
-            )
-            all_results.extend(results)
-
-        if self.telemetry:
-            self.telemetry.stop_collection()
-
-        self._save_results(all_results)
         self._print_summary(all_results)
         self.logger.info(f"\n✓ Benchmark complete. Results saved to {self.output_dir}")
 
