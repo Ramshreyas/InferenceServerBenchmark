@@ -31,9 +31,18 @@
 
 models:
 
-  # ── Large (70B–120B) ─────────────────────────────────────────────────────────
+  # ── Large (80B–125B) ─────────────────────────────────────────────────────────
   # Dense: all weights active. Sparse MoE: all weights load into VRAM regardless
   # of active-param count — VRAM requirement is determined by total param count.
+
+  - name: Qwen/Qwen3.5-122B-A10B-FP8
+    label: qwen35-122b-a10b-fp8
+    role: large
+    quantization: fp8           # Official FP8 quant by Qwen
+    gpu_memory_util: 0.90
+    tensor_parallel: 2          # ~125 GB at FP8 — needs 2× GPUs
+    topology: sparse_moe        # 125B total (qwen3_5_moe), 10B active per token
+    loaded_gb: 125
 
   - name: openai/gpt-oss-120b
     label: gpt-oss-120b
@@ -44,78 +53,69 @@ models:
     topology: dense
     loaded_gb: 60
 
-  - name: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
-    label: deepseek-r1-llama-70b
-    role: large
-    quantization: fp8
-    gpu_memory_util: 0.90
-    tensor_parallel: 1
-    topology: dense
-    loaded_gb: 72
-
-  - name: Qwen/Qwen3-Next-80B-A3B-Thinking
-    label: qwen3-next-80b-thinking
+  - name: Qwen/Qwen3-Coder-Next
+    label: qwen3-coder-next
     role: large
     quantization: fp8           # BF16 ~160 GB; FP8 brings it to ~80 GB
     gpu_memory_util: 0.90
     tensor_parallel: 1
-    topology: sparse_moe        # 80B total weights, 3B active per forward pass
+    topology: sparse_moe        # 80B total (qwen3_next hybrid DeltaNet+Attn+MoE), 3B active; 512 experts, 10 active + 1 shared
     loaded_gb: 80
 
-  # ── Medium (30B–32B) ─────────────────────────────────────────────────────────
+  # ── Medium (27B–36B) ─────────────────────────────────────────────────────────
 
-  - name: Qwen/Qwen3-30B-A3B-Thinking-2507
-    label: qwen3-30b-thinking
+  - name: Qwen/Qwen3.5-27B
+    label: qwen35-27b
+    role: large
+    quantization: fp8           # BF16 ~56 GB; FP8 brings it to ~28 GB
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+    topology: dense             # 28B dense (qwen3_5), multimodal image-text-to-text
+    loaded_gb: 28
+
+  - name: Qwen/Qwen3.5-35B-A3B
+    label: qwen35-35b-a3b
+    role: large
+    quantization: fp8           # BF16 ~72 GB; FP8 brings it to ~36 GB
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+    topology: sparse_moe        # 36B total (qwen3_5_moe), 3B active per token
+    loaded_gb: 36
+
+  - name: zai-org/GLM-4.7-Flash
+    label: glm-47-flash
     role: large
     quantization: none          # BF16; MoE: small active KV footprint
     gpu_memory_util: 0.92
     tensor_parallel: 1
-    topology: sparse_moe        # 30B total weights, 3B active per forward pass
+    topology: sparse_moe        # 30B total (glm4_moe_lite), 3B active per token
     loaded_gb: 60
 
-  - name: Qwen/QwQ-32B
-    label: qwq-32b
-    role: large
-    quantization: fp8
+  # ── Small (8B–14B) ───────────────────────────────────────────────────────────
+
+  - name: nvidia/NVIDIA-Nemotron-Nano-9B-v2
+    label: nemotron-nano-9b-v2
+    role: small
+    quantization: none          # BF16; hybrid Mamba2-Transformer (nemotron_h)
+    gpu_memory_util: 0.85
+    tensor_parallel: 1
+    topology: dense             # All params active (Mamba2 + 4 Attention layers)
+    loaded_gb: 18
+
+  - name: mistralai/Ministral-3-14B-Instruct-2512
+    label: ministral3-14b
+    role: small
+    quantization: none          # Pre-quantized FP8; 13.5B LM + 0.4B vision encoder
     gpu_memory_util: 0.85
     tensor_parallel: 1
     topology: dense
-    loaded_gb: 33
+    loaded_gb: 14
 
-  - name: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
-    label: deepseek-r1-qwen-32b
-    role: large
-    quantization: fp8
-    gpu_memory_util: 0.90
-    tensor_parallel: 1
-    topology: dense
-    loaded_gb: 33
-
-  # ── Small (7B–8B) ────────────────────────────────────────────────────────────
-
-  - name: Qwen/Qwen3-8B
-    label: qwen3-8b
+  - name: mistralai/Ministral-3-8B-Instruct-2512
+    label: ministral3-8b
     role: small
-    quantization: none          # BF16
+    quantization: none          # Pre-quantized FP8; ~8.9B params (mistral3)
     gpu_memory_util: 0.85
     tensor_parallel: 1
     topology: dense
-    loaded_gb: 16
-
-  - name: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
-    label: deepseek-r1-qwen-7b
-    role: small
-    quantization: none          # BF16
-    gpu_memory_util: 0.90
-    tensor_parallel: 1
-    topology: dense
-    loaded_gb: 15
-
-  - name: mistralai/Mistral-7B-Instruct-v0.3
-    label: mistral-7b
-    role: small
-    quantization: none          # BF16
-    gpu_memory_util: 0.85
-    tensor_parallel: 1
-    topology: dense
-    loaded_gb: 15
+    loaded_gb: 9
