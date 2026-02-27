@@ -46,7 +46,7 @@ models:
     tensor_parallel: 1          # ~61 GB at AWQ-4bit — fits single 96 GB GPU
     topology: sparse_moe        # 122B total (qwen3_5_moe), 10B active per token
     loaded_gb: 65
-    vllm_extra_flags: "--language-model-only --reasoning-parser qwen3"   # reasoning-parser required for Qwen3.5; try without --enforce-eager (cu130-nightly may have fixes)
+    vllm_extra_flags: "--language-model-only --enforce-eager --reasoning-parser qwen3"   # enforce-eager required: CUDA graphs crash on hybrid DeltaNet+MoE AWQ quant
 
   - name: openai/gpt-oss-120b
     label: gpt-oss-120b
