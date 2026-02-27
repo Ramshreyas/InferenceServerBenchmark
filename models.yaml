@@ -57,14 +57,15 @@ models:
     topology: dense
     loaded_gb: 60
 
-  - name: Qwen/Qwen3-Coder-Next
-    label: qwen3-coder-next
+  - name: Qwen/Qwen3-Coder-Next-FP8
+    label: qwen3-coder-next-fp8
     role: large
-    quantization: fp8           # BF16 ~160 GB; FP8 brings it to ~80 GB
+    quantization: none          # Pre-quantized FP8 by Qwen — vLLM auto-detects; do NOT pass --quantization
     gpu_memory_util: 0.90
     tensor_parallel: 1
     topology: sparse_moe        # 80B total (qwen3_next hybrid DeltaNet+Attn+MoE), 3B active; 512 experts, 10 active + 1 shared
     loaded_gb: 80
+    vllm_extra_flags: "--enforce-eager --max-model-len 32768"   # enforce-eager: CUDA graphs crash on hybrid DeltaNet+MoE; max-model-len: 256K default OOMs on single GPU
 
   # ── Medium (27B–36B) ─────────────────────────────────────────────────────────
 
