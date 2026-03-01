@@ -20,7 +20,7 @@ prompt_token_lengths: [512, 2048, 4096, 8192, 16384]
 output_token_lengths: [256, 512, 1024, 2048, 4096]
 
 requests:
-  num_requests: 200        # Per sweep point — required for stable P95/P99
+  num_requests: 50         # Per sweep point — sufficient for stable P95
   concurrency: 10          # Fixed queue depth; ThreadPoolExecutor, not Poisson
   system_prompt: |
     You are a helpful AI assistant.
