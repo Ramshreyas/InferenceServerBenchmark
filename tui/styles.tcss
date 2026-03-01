@@ -89,7 +89,7 @@ ResultsPane:focus {
 #minimap {
     height: auto;
     min-height: 6;
-    max-height: 10;
+    max-height: 16;
     margin: 1 0;
     border: tall $primary-background;
     padding: 1;
@@ -98,7 +98,9 @@ ResultsPane:focus {
 /* ── Scorecard ──────────────────────────────────────────────────── */
 
 #scorecard {
-    height: 3;
+    height: auto;
+    min-height: 1;
+    max-height: 5;
     margin: 0 0 1 0;
     text-style: bold;
 }

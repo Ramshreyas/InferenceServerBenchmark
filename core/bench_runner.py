@@ -35,11 +35,15 @@ from telemetry import TelemetryCollector
 class BenchmarkRunner:
     """Orchestrates benchmark execution and result collection."""
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, sweep_ts: str | None = None, model_tag: str | None = None):
         self.config = self._load_config(config_path)
         self.logger = setup_logger(self.config["benchmark"]["name"])
         self.output_dir = Path("/results")
         self.output_dir.mkdir(exist_ok=True)
+
+        # Sweep-level timestamp (shared across all models in one invocation)
+        self.sweep_ts = sweep_ts
+        self.model_tag = model_tag
 
         # OpenAI-compatible client
         vllm_endpoint = os.getenv("VLLM_ENDPOINT", "http://localhost:8000/v1")
@@ -399,22 +403,35 @@ class BenchmarkRunner:
 
     # ── Result persistence ───────────────────────────────────────────────────
 
-    def _save_results(self, results: List[Dict]):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    def _make_stem(self) -> str:
+        """Build the filename stem: {prefix}_{timestamp}[_{model_tag}].
+
+        When launched from sweep.py the sweep-level timestamp and model tag
+        are injected via CLI so every file from the same invocation shares
+        the same timestamp, with the tag disambiguating per-model files.
+        Standalone / legacy runs fall back to now().
+        """
+        ts = self.sweep_ts or datetime.now().strftime("%Y%m%d_%H%M%S")
         prefix = self.config["benchmark"]["output_prefix"]
+        if self.model_tag:
+            return f"{prefix}_{ts}_{self.model_tag}"
+        return f"{prefix}_{ts}"
+
+    def _save_results(self, results: List[Dict]):
+        stem = self._make_stem()
 
         for r in results:
             r.setdefault("model", self._model_name)
 
-        json_path = self.output_dir / f"{prefix}_{timestamp}_detailed.json"
+        json_path = self.output_dir / f"{stem}_detailed.json"
         save_json(results, json_path)
 
-        csv_path = self.output_dir / f"{prefix}_{timestamp}_summary.csv"
+        csv_path = self.output_dir / f"{stem}_summary.csv"
         save_csv(results, csv_path)
 
         if self.telemetry:
             telemetry_data = self.telemetry.get_data()
-            telemetry_path = self.output_dir / f"{prefix}_{timestamp}_telemetry.json"
+            telemetry_path = self.output_dir / f"{stem}_telemetry.json"
             save_json(telemetry_data, telemetry_path)
 
         self.logger.info(f"Results saved to {json_path}")
@@ -422,9 +439,8 @@ class BenchmarkRunner:
 
     def _save_decision_csv(self, results: List[Dict]):
         """Write Goal 1 decision CSV: one row per (model, prompt, output) with percentiles."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        prefix = self.config["benchmark"]["output_prefix"]
-        csv_path = self.output_dir / f"{prefix}_{timestamp}_decision.csv"
+        stem = self._make_stem()
+        csv_path = self.output_dir / f"{stem}_decision.csv"
 
         successful = [r for r in results if r.get("success")]
         if not successful:
@@ -540,9 +556,13 @@ class BenchmarkRunner:
 def main():
     parser = argparse.ArgumentParser(description="Run vLLM benchmark")
     parser.add_argument("--config", required=True, help="Path to YAML config file")
+    parser.add_argument("--sweep-ts", default=None,
+                        help="Sweep-level timestamp (shared across all models in one invocation)")
+    parser.add_argument("--model-tag", default=None,
+                        help="Short model label for filename disambiguation")
     args = parser.parse_args()
 
-    runner = BenchmarkRunner(args.config)
+    runner = BenchmarkRunner(args.config, sweep_ts=args.sweep_ts, model_tag=args.model_tag)
     runner.run()
     sys.exit(runner.exit_code)
 

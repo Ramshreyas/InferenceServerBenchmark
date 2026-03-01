@@ -33,11 +33,15 @@ from telemetry import TelemetryCollector
 class CoDeployRunner:
     """Benchmarks two co-deployed models under a traffic split."""
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, sweep_ts: str | None = None, model_tag: str | None = None):
         self.config = self._load_config(config_path)
         self.logger = setup_logger(self.config["benchmark"]["name"])
         self.output_dir = Path("/results")
         self.output_dir.mkdir(exist_ok=True)
+
+        # Sweep-level timestamp (shared across all pairs in one invocation)
+        self.sweep_ts = sweep_ts
+        self.model_tag = model_tag
 
         # ── Endpoints ────────────────────────────────────────────────────────
         large_url = os.getenv("VLLM_ENDPOINT_LARGE", "http://vllm-large:8000/v1")
@@ -391,9 +395,13 @@ class CoDeployRunner:
 def main():
     parser = argparse.ArgumentParser(description="Co-deploy split-load benchmark")
     parser.add_argument("--config", required=True, help="Path to split_load YAML config")
+    parser.add_argument("--sweep-ts", default=None,
+                        help="Sweep-level timestamp (shared across all pairs in one invocation)")
+    parser.add_argument("--model-tag", default=None,
+                        help="Short model-pair label for filename disambiguation")
     args = parser.parse_args()
 
-    runner = CoDeployRunner(args.config)
+    runner = CoDeployRunner(args.config, sweep_ts=args.sweep_ts, model_tag=args.model_tag)
     runner.run()
 
 

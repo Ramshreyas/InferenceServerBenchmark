@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from datetime import datetime
 from itertools import product
 from pathlib import Path
 
@@ -222,13 +223,18 @@ def serve_model(model: dict, enable_prefix_caching: bool = True):
     wait_for_vllm(timeout=1800)  # large models can take 15-30 min to load on first run
 
 
-def run_bench(bench_key: str) -> int:
+def run_bench(bench_key: str, sweep_ts: str | None = None, model_tag: str | None = None) -> int:
     """Run benchmark container; return exit code (0=pass, 1=partial fail, 2+=total fail)."""
     config_path = BENCH_CONFIGS[bench_key]
-    result = run([
+    cmd = [
         "docker", "compose", "run", "--rm", "bench-runner",
         "python", "/app/core/bench_runner.py", "--config", config_path,
-    ], check=False)
+    ]
+    if sweep_ts:
+        cmd += ["--sweep-ts", sweep_ts]
+    if model_tag:
+        cmd += ["--model-tag", model_tag]
+    result = run(cmd, check=False)
     return result.returncode
 
 
@@ -330,6 +336,7 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
 
     section(f"CO-DEPLOY SWEEP  |  {len(pairs)} pair(s)")
     hf_token = os.environ.get("HF_TOKEN")
+    sweep_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     failed = []
 
     for lg, sm, lg_util, sm_util in pairs:
@@ -375,11 +382,14 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
                 continue
 
         try:
+            pair_tag = f"{lg_label}+{sm_label}"
             run([
                 "docker", "compose", "--profile", "co-deploy",
                 "run", "--rm", "co-runner",
                 "python", "/app/core/co_deploy_runner.py",
                 "--config", "/configs/split_load.yaml",
+                "--sweep-ts", sweep_ts,
+                "--model-tag", pair_tag,
             ])
         except Exception as e:
             print(f"  *** BENCH FAILED: {e}", file=sys.stderr)
@@ -541,7 +551,8 @@ def main():
 
     # ── Single-model sweep: serve → bench for each model ──────────────────────
     bench_key = args.bench
-    section(f"SWEEP: {bench_key}  |  {len(models)} model(s)")
+    sweep_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    section(f"SWEEP: {bench_key}  |  {len(models)} model(s)  |  sweep_ts={sweep_ts}")
 
     report: list[tuple[str, str, str]] = []  # (label, status, detail)
 
@@ -567,7 +578,7 @@ def main():
             continue
 
         print(f"[{i}/{len(models)}] Benchmarking: {bench_key}")
-        exit_code = run_bench(bench_key)
+        exit_code = run_bench(bench_key, sweep_ts=sweep_ts, model_tag=label)
         if exit_code == 0:
             report.append((label, "PASS", "all requests succeeded"))
         elif exit_code == 1:
