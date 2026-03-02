@@ -42,8 +42,8 @@ models:
     label: qwen35-122b-a10b-nvfp4
     role: large
     quantization: none          # NVFP4 via compressed-tensors — vLLM auto-detects from checkpoint config; do NOT pass --quantization
-    gpu_memory_util: 0.92
-    tensor_parallel: 1          # ~65 GB NVFP4 (W4A4) — fits single 96 GB GPU with ~30 GB KV-cache headroom
+    gpu_memory_util: 0.80
+    tensor_parallel: 1          # ~65 GB NVFP4 (W4A4) — fits single 96 GB GPU; 0.80 leaves ~19 GB for Triton autotuner scratch on DeltaNet FLA kernels
     topology: sparse_moe        # 122B total (qwen3_5_moe), 10B active per token
     loaded_gb: 65
     vllm_extra_flags: "--language-model-only --enforce-eager --reasoning-parser qwen3"   # enforce-eager: CUDA graphs crash on hybrid DeltaNet+MoE; no --tokenizer needed (native safetensors)
