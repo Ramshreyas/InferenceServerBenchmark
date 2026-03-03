@@ -15,6 +15,7 @@ services:
     image: vllm/vllm-openai:cu130-nightly
     container_name: vllm-large
     runtime: nvidia
+    restart: unless-stopped
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0
