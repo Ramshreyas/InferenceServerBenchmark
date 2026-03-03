@@ -1,0 +1,11 @@
+# Core benchmark dependencies
+numpy>=1.24.0
+openai>=1.0.0
+pandas>=2.0.0
+pyyaml>=6.0
+requests
+tqdm>=4.60.0
+
+# TUI dashboard
+textual>=0.40.0
+rich>=13.0.0
