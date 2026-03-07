@@ -353,3 +353,41 @@ def slice_split_load(
 
 def load_sanity_summary(path: str) -> pd.DataFrame:
     return pd.read_csv(path)
+
+
+# ---------------------------------------------------------------------------
+# STT (offline) data
+# ---------------------------------------------------------------------------
+
+def load_stt_summary(path: str) -> pd.DataFrame:
+    """Load an STT summary CSV.
+
+    Columns: model, concurrency_level, n_requests, n_success,
+             mean_wer, median_wer, P95_wer,
+             mean_rtf, median_rtf, P95_rtf,
+             P50_latency_ms, P95_latency_ms, P99_latency_ms,
+             total_audio_duration_s
+    """
+    return pd.read_csv(path)
+
+
+def get_stt_concurrency_levels(df: pd.DataFrame) -> list:
+    """Return sorted concurrency levels from an STT summary."""
+    return sorted(df["concurrency_level"].unique().tolist(), key=str)
+
+
+# ---------------------------------------------------------------------------
+# STT streaming data
+# ---------------------------------------------------------------------------
+
+def load_stt_streaming_summary(path: str) -> pd.DataFrame:
+    """Load a streaming STT summary CSV.
+
+    Columns: model, concurrency_level, n_requests, n_success,
+             mean_wer, median_wer, P95_wer,
+             mean_rtf, median_rtf,
+             mean_ttfw_ms, P50_ttfw_ms, P95_ttfw_ms,
+             mean_inter_delta_ms,
+             P50_latency_ms, P95_latency_ms, P99_latency_ms
+    """
+    return pd.read_csv(path)

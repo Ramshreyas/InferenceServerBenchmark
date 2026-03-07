@@ -19,6 +19,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #   make stt-sanity LABEL=voxtral-mini-4b         Quick STT smoke test
 #   make stt-bench LABEL=voxtral-mini-4b          STT concurrency benchmark
+#   make stt-streaming-sanity LABEL=voxtral-mini-4b  Streaming STT smoke test
+#   make stt-streaming-bench LABEL=voxtral-mini-4b   Streaming STT concurrency benchmark
 #   make mixed-co-deploy LABEL_LARGE=gpt-oss-120b LABEL_STT=voxtral-mini-4b
 #   make download-stt-data                        Download LibriSpeech test-clean
 #
@@ -96,6 +98,18 @@ mixed-co-deploy:
 		$(if $(LABEL_STT),--label-stt $(LABEL_STT),)
 
 # ==============================================================================
+# STREAMING STT  —  WebSocket /v1/realtime benchmarks
+# ==============================================================================
+
+# Streaming STT sanity check — quick WebSocket smoke test
+stt-streaming-sanity:
+	$(PYTHON) core/sweep.py --bench stt-streaming-sanity $(if $(LABEL),--label $(LABEL),)
+
+# Streaming STT concurrency benchmark — TTFW, inter-delta, WER under concurrent streams
+stt-streaming-bench:
+	$(PYTHON) core/sweep.py --bench stt-streaming-bench $(if $(LABEL),--label $(LABEL),)
+
+# ==============================================================================
 # BENCH-ONLY  —  run against whatever vLLM server is currently up
 # ==============================================================================
 
@@ -142,5 +156,6 @@ tui:
 .PHONY: \
 	sanity concurrency-bench co-deploy probe serve \
 	stt-sanity stt-bench mixed-co-deploy download-stt-data \
+	stt-streaming-sanity stt-streaming-bench \
 	bench-sanity bench-concurrency \
 	logs status stop results gpu-monitor prefetch tui

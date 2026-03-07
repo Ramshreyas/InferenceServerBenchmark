@@ -25,6 +25,9 @@ from tui.data import (
     load_merged_decision_csvs,
     load_split_load_summary,
     load_sanity_summary,
+    load_stt_summary,
+    load_stt_streaming_summary,
+    get_stt_concurrency_levels,
     get_concurrency_grid,
     get_models_in_decision,
     slice_decision,
@@ -60,6 +63,15 @@ CO_TTFT_LABELS = {
 CO_THRU_METRIC = "combined_throughput_tok_s"
 CO_THRU_LABEL = "Combined Throughput (tok/s)"
 
+# Bench types that get STT-specific rendering
+STT_BENCH_TYPES = {
+    "stt_sanity", "stt_concurrency_bench",
+    "stt_streaming_sanity", "stt_streaming_bench",
+}
+STT_STREAMING_BENCH_TYPES = {
+    "stt_streaming_sanity", "stt_streaming_bench",
+}
+
 
 def _short_model(name: str) -> str:
     """Shorten 'org/Model-Name' → 'Model-Name', truncate at 30 chars."""
@@ -74,7 +86,21 @@ def _bar_color(value: float, metric: str) -> str:
     """Choose bar colour based on metric thresholds."""
     if "throughput" in metric:
         return "cyan"
-    # TTFT
+    # WER — lower is better; green < 5%, yellow < 15%, red >= 15%
+    if "wer" in metric:
+        if value < 0.05:
+            return "green"
+        elif value <= 0.15:
+            return "yellow"
+        return "red"
+    # RTF — lower is better; green < 0.5, yellow < 1.0, red >= 1.0
+    if "rtf" in metric:
+        if value < 0.5:
+            return "green"
+        elif value < 1.0:
+            return "yellow"
+        return "red"
+    # TTFW / inter-delta / latency — treat like TTFT
     if value < 200:
         return "green"
     elif value <= 1000:
@@ -263,11 +289,22 @@ class ResultsTab(Widget):
         bench_labels = {
             "concurrency_bench": "⚡ Concurrency Bench",
             "split_load": "🔀 Co-Deploy",
+            "stt_sanity": "🎤 STT Sanity",
+            "stt_concurrency_bench": "🎤 STT Bench",
+            "stt_streaming_sanity": "🎤 STT Streaming Sanity",
+            "stt_streaming_bench": "🎤 STT Streaming Bench",
+            "mixed_co_deploy": "🎤+⚡ Mixed Co-Deploy",
             "sanity_check": "✅ Sanity Check",
         }
         
         # Enforce specific order
-        bench_order = ["concurrency_bench", "split_load", "sanity_check"]
+        bench_order = [
+            "concurrency_bench", "split_load",
+            "stt_sanity", "stt_concurrency_bench",
+            "stt_streaming_sanity", "stt_streaming_bench",
+            "mixed_co_deploy",
+            "sanity_check",
+        ]
 
         for bench_type in bench_order:
             if bench_type in groups:
@@ -345,6 +382,11 @@ class ResultsTab(Widget):
             self._show_sanity(rs)
             return
 
+        # ── STT bench types: dedicated renderer ──────────────────────
+        if rs.bench_type in STT_BENCH_TYPES:
+            self._show_stt(rs)
+            return
+
         # Load the appropriate CSV
         csv_path = rs.decision_csv or rs.summary_csv
         if csv_path is None:
@@ -410,6 +452,107 @@ class ResultsTab(Widget):
         self.query_one("#scorecard", Static).update("")
         for wid in ("prompt-val", "output-val", "metric-val", "grid-pos"):
             self.query_one(f"#{wid}", Static).update("—")
+
+    # ── STT view (bar charts + summary table) ────────────────────────────
+
+    def _show_stt(self, rs: ResultSet) -> None:
+        """Render STT (offline or streaming) benchmark results.
+
+        Shows:
+          Left chart:  WER bar chart (lower is better) — one bar per concurrency level
+          Right chart: RTF bar chart (lower is better)
+                       OR for streaming: TTFW bar chart (lower is better)
+          Below:       Full summary table with all metrics
+        """
+        path = rs.summary_csv
+        if path is None:
+            self.query_one("#chart-ttft", Static).update("No summary CSV found for this run.")
+            self.query_one("#chart-thru", Static).update("")
+            self.query_one("#minimap", Static).update("")
+            self.query_one("#scorecard", Static).update("")
+            for wid in ("prompt-val", "output-val", "metric-val", "grid-pos"):
+                self.query_one(f"#{wid}", Static).update("—")
+            return
+
+        is_streaming = rs.bench_type in STT_STREAMING_BENCH_TYPES
+        df = load_stt_streaming_summary(path) if is_streaming else load_stt_summary(path)
+
+        if df.empty:
+            self.query_one("#chart-ttft", Static).update("Summary CSV is empty.")
+            self.query_one("#chart-thru", Static).update("")
+            self.query_one("#minimap", Static).update("")
+            self.query_one("#scorecard", Static).update("")
+            for wid in ("prompt-val", "output-val", "metric-val", "grid-pos"):
+                self.query_one(f"#{wid}", Static).update("—")
+            return
+
+        # Label for concurrency level in chart bars
+        def _conc_label(row) -> str:
+            level = row.get("concurrency_level", "?")
+            n = row.get("n_requests", "?")
+            return f"conc={level} (n={n})"
+
+        # ── Left chart: WER ──────────────────────────────────────────────
+        wer_col = "mean_wer"
+        if wer_col in df.columns:
+            wer_chart = _render_chart(
+                df, wer_col, "Mean WER  —  lower is better",
+                higher_better=False, unit="", fmt=">8.4f",
+                name_fn=_conc_label,
+            )
+        else:
+            wer_chart = Text("No WER data available.", style="dim")
+
+        # ── Right chart: RTF (offline) or TTFW (streaming) ──────────────
+        if is_streaming and "P95_ttfw_ms" in df.columns:
+            right_chart = _render_chart(
+                df, "P95_ttfw_ms", "P95 TTFW (ms)  —  lower is better",
+                higher_better=False, unit="ms", fmt=">8.0f",
+                name_fn=_conc_label,
+            )
+        elif "mean_rtf" in df.columns:
+            right_chart = _render_chart(
+                df, "mean_rtf", "Mean RTF  —  lower is better (< 1.0 = real-time)",
+                higher_better=False, unit="", fmt=">8.4f",
+                name_fn=_conc_label,
+            )
+        else:
+            right_chart = Text("No RTF/TTFW data available.", style="dim")
+
+        self.query_one("#chart-ttft", Static).update(wer_chart)
+        self.query_one("#chart-thru", Static).update(right_chart)
+
+        # ── Summary table below charts ───────────────────────────────────
+        bench_label = "Streaming STT" if is_streaming else "STT"
+        table = RichTable(
+            title=f"{bench_label} Summary — {rs.model_tag or rs.label}",
+            box=None,
+        )
+        for col in df.columns:
+            table.add_column(col, justify="right" if df[col].dtype != object else "left")
+        for _, row in df.iterrows():
+            cells = []
+            for col in df.columns:
+                val = row[col]
+                if isinstance(val, float):
+                    if "wer" in col or "rtf" in col:
+                        cells.append(f"{val:.4f}")
+                    else:
+                        cells.append(f"{val:.2f}")
+                else:
+                    cells.append(str(val))
+            table.add_row(*cells)
+
+        self.query_one("#minimap", Static).update(table)
+
+        # ── Controls + scorecard: show bench type label ──────────────────
+        model_name = df["model"].iloc[0] if "model" in df.columns else "?"
+        levels = get_stt_concurrency_levels(df)
+        self.query_one("#prompt-val", Static).update(f"{_short_model(str(model_name))}")
+        self.query_one("#output-val", Static).update(f"levels: {levels}")
+        self.query_one("#metric-val", Static).update(bench_label)
+        self.query_one("#grid-pos", Static).update(f"[{len(df)} rows]")
+        self.query_one("#scorecard", Static).update("")
 
     # ── Tuner rendering ──────────────────────────────────────────────────
 

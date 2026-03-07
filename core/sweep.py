@@ -35,6 +35,11 @@ STT_BENCH_CONFIGS = {
     "stt-concurrency-bench": "/configs/stt_concurrency_bench.yaml",
 }
 
+STT_STREAMING_BENCH_CONFIGS = {
+    "stt-streaming-sanity": "/configs/stt_streaming_sanity.yaml",
+    "stt-streaming-bench":  "/configs/stt_streaming_bench.yaml",
+}
+
 MIXED_BENCH_CONFIGS = {
     "mixed-co-deploy": "/configs/mixed_co_deploy.yaml",
 }
@@ -253,6 +258,21 @@ def run_stt_bench(bench_key: str, sweep_ts: str | None = None, model_tag: str | 
     cmd = [
         "docker", "compose", "run", "--rm", "stt-runner",
         "python", "/app/core/stt_runner.py", "--config", config_path,
+    ]
+    if sweep_ts:
+        cmd += ["--sweep-ts", sweep_ts]
+    if model_tag:
+        cmd += ["--model-tag", model_tag]
+    result = run(cmd, check=False)
+    return result.returncode
+
+
+def run_stt_streaming_bench(bench_key: str, sweep_ts: str | None = None, model_tag: str | None = None) -> int:
+    """Run streaming STT benchmark container; return exit code."""
+    config_path = STT_STREAMING_BENCH_CONFIGS[bench_key]
+    cmd = [
+        "docker", "compose", "run", "--rm", "stt-streaming-runner",
+        "python", "/app/core/stt_streaming_runner.py", "--config", config_path,
     ]
     if sweep_ts:
         cmd += ["--sweep-ts", sweep_ts]
@@ -579,6 +599,7 @@ def main():
     all_bench_choices = (
         list(BENCH_CONFIGS.keys())
         + list(STT_BENCH_CONFIGS.keys())
+        + list(STT_STREAMING_BENCH_CONFIGS.keys())
         + ["co-deploy", "mixed-co-deploy"]
     )
 
@@ -684,12 +705,13 @@ def main():
             print()
         return
 
-    # ── Determine if this is an STT or text bench ────────────────────────────
+    # ── Determine if this is an STT, streaming STT, or text bench ────────────
     bench_key = args.bench
     is_stt_bench = bench_key in STT_BENCH_CONFIGS
+    is_stt_streaming_bench = bench_key in STT_STREAMING_BENCH_CONFIGS
 
     # Filter models by modality: text benches only run text models, STT only STT
-    if is_stt_bench:
+    if is_stt_bench or is_stt_streaming_bench:
         models = [m for m in models if m.get("modality") == "stt"]
         if not models:
             print("ERROR: No STT models found in models.yaml (need modality: stt)", file=sys.stderr)
@@ -728,7 +750,9 @@ def main():
             continue
 
         print(f"[{i}/{len(models)}] Benchmarking: {bench_key}")
-        if is_stt_bench:
+        if is_stt_streaming_bench:
+            exit_code = run_stt_streaming_bench(bench_key, sweep_ts=sweep_ts, model_tag=label)
+        elif is_stt_bench:
             exit_code = run_stt_bench(bench_key, sweep_ts=sweep_ts, model_tag=label)
         else:
             exit_code = run_bench(bench_key, sweep_ts=sweep_ts, model_tag=label)

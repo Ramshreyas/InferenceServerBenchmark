@@ -1,0 +1,34 @@
+# =============================================================================
+# Streaming STT Sanity Check — Quick smoke test via /v1/realtime WebSocket
+# =============================================================================
+# Stream a handful of audio files over WebSocket and verify transcription +
+# latency metrics.  Used by `make stt-streaming-sanity` for quick validation
+# that the realtime streaming endpoint is working correctly.
+# =============================================================================
+
+benchmark:
+  name: "Streaming STT Sanity Check"
+  description: "Quick smoke test: stream 10 audio files over WebSocket and compute WER"
+  output_prefix: "stt_streaming_sanity"
+
+model:
+  name: "auto"  # Auto-detected from the running vLLM server
+
+# Dataset: LibriSpeech test-clean (download with assets/download_librispeech.sh)
+dataset:
+  name: "librispeech-test-clean"
+  path: "/assets/librispeech-test-clean/LibriSpeech/test-clean"
+  max_files: 10               # Only stream 10 files for sanity check
+
+requests:
+  temperature: 0.0            # Recommended by Voxtral docs
+
+# Streaming configuration
+streaming:
+  chunk_size: 4096            # Bytes per WebSocket chunk (4096 = ~128ms of PCM16 @ 16kHz)
+  realtime_factor: 1.0        # 1.0 = real-time playback; 0.0 = blast (no delay between chunks)
+
+telemetry:
+  sample_interval_sec: 2.0
+  collect_gpu_stats: true
+  collect_power_draw: false

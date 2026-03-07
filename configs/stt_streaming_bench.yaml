@@ -1,0 +1,44 @@
+# =============================================================================
+# Streaming STT Concurrency Benchmark — WebSocket sessions under load
+# =============================================================================
+# Measures streaming-specific metrics under concurrent WebSocket sessions:
+#   - TTFW (Time-to-First-Word)
+#   - Inter-delta latency
+#   - Total session latency
+#   - WER (vs. LibriSpeech reference)
+#   - RTF (Real-Time Factor)
+#
+# Simulates N simultaneous live audio streams (e.g., meeting rooms) hitting
+# the same GPU.
+# =============================================================================
+
+benchmark:
+  name: "Streaming STT Concurrency Benchmark"
+  description: "Concurrent WebSocket streaming: TTFW, inter-delta, WER, RTF under load"
+  output_prefix: "stt_streaming_bench"
+
+model:
+  name: "auto"  # Auto-detected from the running vLLM server
+
+# Dataset: LibriSpeech test-clean (download with assets/download_librispeech.sh)
+dataset:
+  name: "librispeech-test-clean"
+  path: "/assets/librispeech-test-clean/LibriSpeech/test-clean"
+  max_files: 200              # Use up to 200 files for thorough benchmarking
+
+# Concurrency levels to sweep — N simultaneous WebSocket streaming sessions
+concurrency_levels: [1, 2, 4]
+
+requests:
+  num_requests: 30            # Per concurrency level (streaming is slower than offline)
+  temperature: 0.0            # Recommended by Voxtral docs
+
+# Streaming configuration
+streaming:
+  chunk_size: 4096            # Bytes per WebSocket chunk (4096 = ~128ms of PCM16 @ 16kHz)
+  realtime_factor: 1.0        # 1.0 = simulate real-time microphone; 0.0 = blast
+
+telemetry:
+  sample_interval_sec: 2.0
+  collect_gpu_stats: true
+  collect_power_draw: false

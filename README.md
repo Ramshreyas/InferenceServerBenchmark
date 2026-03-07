@@ -7,6 +7,7 @@ A containerized benchmarking suite for making deployment decisions on an **NVIDI
 | **Goal 1** | Which single model delivers the best P95 TTFT and ITL under sustained 10-user concurrency? |
 | **Goal 2** | Which (large + small) model pair delivers the best P95 TTFT and ITL under sustained 10-user concurrency? |
 | **Goal 3** | What STT (speech-to-text) throughput and WER can we achieve? |
+| **Goal 3b** | What streaming STT latency (TTFW, inter-delta) can we achieve via WebSocket? |
 | **Goal 4** | Can we co-deploy a text LLM + STT model and handle both workloads simultaneously? |
 
 The suite supports three modalities: **text** (chat/completion), **STT** (speech-to-text with WER scoring), and **VLM** (vision-language — future).
@@ -34,6 +35,7 @@ Everything else is driven by `make`.
 | `bench-runner` | — | Benchmark runner for single-model benchmarks |
 | `co-runner` | — | Benchmark runner for co-deploy (Goal 2) |
 | `stt-runner` | — | STT benchmark runner (Goal 3) |
+| `stt-streaming-runner` | — | Streaming STT benchmark runner — WebSocket (Goal 3b) |
 | `mixed-runner` | — | Mixed text+STT co-deploy runner (Goal 4) |
 
 ---
@@ -105,6 +107,10 @@ make co-deploy
 make download-stt-data
 make stt-sanity LABEL=voxtral-mini-4b
 make stt-bench LABEL=voxtral-mini-4b
+
+# Goal 3b: Streaming STT benchmarking (WebSocket /v1/realtime)
+make stt-streaming-sanity LABEL=voxtral-mini-4b
+make stt-streaming-bench LABEL=voxtral-mini-4b
 
 # Goal 4: Mixed text + STT co-deploy
 make mixed-co-deploy LABEL_LARGE=gpt-oss-120b LABEL_STT=voxtral-mini-4b
@@ -242,6 +248,28 @@ make stt-bench LABEL=voxtral-mini-4b
 
 Transcribes audio files from LibriSpeech test-clean via `/v1/audio/transcriptions`, computes **WER** (Word Error Rate) against reference transcripts, and measures **RTF** (Real-Time Factor). Concurrency sweep tests throughput under parallel streams.
 
+### 3b. Goal 3b — Streaming STT Benchmark (WebSocket)
+
+> "What is the streaming latency when simulating live microphone input?"
+
+```bash
+# Quick smoke test (10 files, sequential)
+make stt-streaming-sanity LABEL=voxtral-mini-4b
+
+# Concurrency benchmark (1, 2, 4 simultaneous WebSocket sessions)
+make stt-streaming-bench LABEL=voxtral-mini-4b
+```
+
+Streams PCM16 audio at real-time speed over the `/v1/realtime` WebSocket API, simulating live microphone input. Measures streaming-specific metrics:
+
+- **TTFW** (Time-to-First-Word) — first audio chunk sent → first `transcription.delta` received
+- **Inter-delta latency** — gaps between successive delta events (mean, P50, P95)
+- **Final latency** — stream start → `transcription.done`
+- **WER** — against LibriSpeech reference transcripts (same dataset as offline for direct comparison)
+- **RTF** — total session time / audio duration
+
+Configurable `realtime_factor` (1.0 = real-time mic speed, 0.0 = blast as fast as possible) and `chunk_size` (bytes per WebSocket frame — 4096 bytes ≈ 128ms @ 16kHz mono).
+
 ### 4. Goal 4 — Mixed Co-Deploy (Text + STT)
 
 > "Can we run text and STT simultaneously on one GPU?"
@@ -264,6 +292,8 @@ Co-deploys a text LLM + STT model on the same GPU and benchmarks both simultaneo
 | `make download-stt-data` | Download LibriSpeech test-clean dataset |
 | `make stt-sanity [LABEL=]` | Goal 3 — quick 10-file STT smoke test |
 | `make stt-bench [LABEL=]` | Goal 3 — STT concurrency benchmark |
+| `make stt-streaming-sanity [LABEL=]` | Goal 3b — streaming STT smoke test (WebSocket) |
+| `make stt-streaming-bench [LABEL=]` | Goal 3b — streaming STT concurrency benchmark |
 | `make mixed-co-deploy [LABEL_LARGE= LABEL_STT=]` | Goal 4 — text + STT simultaneous benchmark |
 | `make probe [LABEL=]` | Auto-detect max_model_len for models |
 | `make serve LABEL=<label>` | Start vLLM for one model (no bench) |
@@ -288,12 +318,13 @@ Co-deploys a text LLM + STT model on the same GPU and benchmarks both simultaneo
 ├── GATEWAY.md                   ← Gateway integration notes
 ├── Makefile                     ← All make targets
 ├── docker-compose.yml           ← vllm-large/small, bench/co/stt/mixed runners
-├── Dockerfile                   ← Runner images (includes soundfile for STT)
+├── Dockerfile                   ← Runner images (includes soundfile, librosa, websockets for STT)
 ├── core/
 │   ├── sweep.py                 ← Iterates models.yaml, drives docker compose
 │   ├── bench_runner.py          ← Single-model benchmark (sanity, concurrency)
 │   ├── co_deploy_runner.py      ← Split-load benchmark against two endpoints (Goal 2)
 │   ├── stt_runner.py            ← STT benchmark — WER, RTF, concurrency sweep (Goal 3)
+│   ├── stt_streaming_runner.py  ← Streaming STT — WebSocket /v1/realtime (Goal 3b)
 │   ├── mixed_co_deploy_runner.py ← Simultaneous text+STT benchmark (Goal 4)
 │   ├── prefetch.py              ← Pre-downloads all models to HF cache
 │   ├── telemetry.py             ← GPU monitoring via nvidia-smi
@@ -304,6 +335,8 @@ Co-deploys a text LLM + STT model on the same GPU and benchmarks both simultaneo
 │   ├── split_load.yaml          ← Goal 2: same 2-D sweep, 70/30 traffic split
 │   ├── stt_sanity.yaml          ← Goal 3: 10-file STT smoke test
 │   ├── stt_concurrency_bench.yaml ← Goal 3: STT concurrency sweep [1,2,4,8]
+│   ├── stt_streaming_sanity.yaml ← Goal 3b: streaming STT smoke test (WebSocket)
+│   ├── stt_streaming_bench.yaml ← Goal 3b: streaming STT concurrency sweep [1,2,4]
 │   └── mixed_co_deploy.yaml     ← Goal 4: text + STT simultaneous benchmark
 ├── assets/
 │   ├── download_librispeech.sh  ← Downloads LibriSpeech test-clean (~346 MB)
@@ -343,6 +376,10 @@ Co-deploys a text LLM + STT model on the same GPU and benchmarks both simultaneo
 | `stt_sanity_{ts}_summary.csv` | STT sanity stats |
 | `stt_concurrency_{ts}_detailed.json` | STT results under concurrent load |
 | `stt_concurrency_{ts}_summary.csv` | **Goal 3** — WER, RTF, throughput by concurrency level |
+| `stt_streaming_sanity_{ts}_detailed.json` | Per-file streaming STT results (TTFW, deltas, WER) |
+| `stt_streaming_sanity_{ts}_summary.csv` | Streaming STT sanity stats |
+| `stt_streaming_bench_{ts}_detailed.json` | Streaming STT under concurrent WebSocket sessions |
+| `stt_streaming_bench_{ts}_summary.csv` | **Goal 3b** — TTFW, inter-delta, WER by concurrency level |
 | `mixed_co_deploy_{ts}_detailed.json` | Text + STT per-request results |
 | `mixed_co_deploy_{ts}_summary.csv` | **Goal 4** — independent metrics for both endpoints |
 
@@ -353,10 +390,17 @@ Co-deploys a text LLM + STT model on the same GPU and benchmarks both simultaneo
 - **ITL** (Inter-Token Latency) — average time between consecutive tokens. Must be < 100 ms for smooth streaming.
 - **Throughput** — tokens generated per second.
 
-**STT:**
+**STT (Offline):**
 - **WER** (Word Error Rate) — edit distance between transcription and reference, normalized by reference length. Lower is better.
 - **RTF** (Real-Time Factor) — processing time / audio duration. RTF < 1.0 means faster than real-time.
 - **Throughput** — audio seconds processed per wall-clock second under concurrent load.
+
+**STT (Streaming):**
+- **TTFW** (Time-to-First-Word) — first audio chunk sent → first `transcription.delta` received. Measures perceived responsiveness.
+- **Inter-delta Latency** — time between successive delta events (mean, P50, P95). Must be low for smooth real-time display.
+- **Final Latency** — stream start → `transcription.done`. Total session duration.
+- **WER** — same metric as offline, against LibriSpeech reference transcripts.
+- **RTF** — session time / audio duration under streaming conditions.
 
 ---
 
@@ -378,6 +422,13 @@ Co-deploys a text LLM + STT model on the same GPU and benchmarks both simultaneo
 1. From `stt_*_summary.csv`, check `mean_wer` — acceptable range depends on domain (< 5% for clean speech).
 2. Check `mean_rtf` — must be < 1.0 for real-time transcription.
 3. Review throughput at target concurrency level.
+
+### Goal 3b — Streaming STT Latency
+
+1. From `stt_streaming_bench_*_summary.csv`, check `mean_ttfw_ms` — lower is better for perceived responsiveness.
+2. Check `p95_inter_delta_ms` — must be low for smooth real-time text display (< 500ms suggested).
+3. Compare `mean_wer` against offline results (Goal 3) — streaming WER should be comparable.
+4. Check `mean_rtf` at target concurrency — must be < 1.0 to keep up with real-time audio.
 
 ### Goal 4 — Mixed Co-Deploy Feasibility
 
