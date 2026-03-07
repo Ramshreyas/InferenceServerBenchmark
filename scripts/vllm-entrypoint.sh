@@ -8,8 +8,11 @@
 # =============================================================================
 set -e
 
-# Install soundfile (required by Voxtral / mistral-common tokenizer)
-pip install --quiet --no-cache-dir 'mistral-common[soundfile]' 2>/dev/null || true
+# Install audio processing libraries (required by Voxtral / mistral-common tokenizer)
+pip install --quiet --no-cache-dir soxr librosa soundfile 'mistral-common[audio]' 2>/dev/null || true
+
+# Upgrade transformers to v5 (Voxtral model card recommends it to suppress warnings)
+pip install --quiet --no-cache-dir --upgrade transformers 2>/dev/null || true
 
 # Hand off to vLLM serve with all original arguments
 exec vllm serve "$@"
