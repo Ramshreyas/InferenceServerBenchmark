@@ -2,6 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install system dependencies (libsndfile for audio file handling)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies
 RUN pip install --no-cache-dir \
     requests \
@@ -10,7 +15,8 @@ RUN pip install --no-cache-dir \
     pandas \
     openai \
     python-dotenv \
-    tqdm
+    tqdm \
+    soundfile
 
 # Copy core modules (will be overridden by volume mount in dev)
 COPY core/ /app/core/

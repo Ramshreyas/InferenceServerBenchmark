@@ -15,6 +15,13 @@
 #   make probe                            Auto-detect max_model_len for all models
 #   make probe LABEL=qwen3-8b             Auto-detect for one model
 #
+# STT (Speech-to-Text)
+# ─────────────────────────────────────────────────────────────────────────────
+#   make stt-sanity LABEL=voxtral-mini-4b         Quick STT smoke test
+#   make stt-bench LABEL=voxtral-mini-4b          STT concurrency benchmark
+#   make mixed-co-deploy LABEL_LARGE=gpt-oss-120b LABEL_STT=voxtral-mini-4b
+#   make download-stt-data                        Download LibriSpeech test-clean
+#
 # ONE-OFF / MANUAL
 # ─────────────────────────────────────────────────────────────────────────────
 #   make serve LABEL=mistral-7b    Boot vLLM for one model (then bench manually)
@@ -36,6 +43,7 @@ PYTHON       := python3
 LABEL        ?=   # filter to a single model label (single-model benchmarks)
 LABEL_LARGE  ?=   # filter large-role model (co-deploy)
 LABEL_SMALL  ?=   # filter small-role model (co-deploy)
+LABEL_STT    ?=   # filter STT model (mixed-co-deploy)
 
 # ==============================================================================
 # PRIMARY  —  models.yaml-driven sweeps
@@ -64,6 +72,28 @@ serve:
 		exit 1; \
 	fi
 	$(PYTHON) core/sweep.py --serve-only --label $(LABEL)
+
+# ==============================================================================
+# STT (Speech-to-Text)  —  models.yaml-driven sweeps
+# ==============================================================================
+
+# Download LibriSpeech test-clean dataset for STT benchmarking
+download-stt-data:
+	bash assets/download_librispeech.sh
+
+# STT sanity check — quick smoke test
+stt-sanity:
+	$(PYTHON) core/sweep.py --bench stt-sanity $(if $(LABEL),--label $(LABEL),)
+
+# STT concurrency benchmark — throughput, RTF, WER under concurrent streams
+stt-bench:
+	$(PYTHON) core/sweep.py --bench stt-concurrency-bench $(if $(LABEL),--label $(LABEL),)
+
+# Mixed co-deploy — text + STT models simultaneously
+mixed-co-deploy:
+	$(PYTHON) core/sweep.py --bench mixed-co-deploy \
+		$(if $(LABEL_LARGE),--label-large $(LABEL_LARGE),) \
+		$(if $(LABEL_STT),--label-stt $(LABEL_STT),)
 
 # ==============================================================================
 # BENCH-ONLY  —  run against whatever vLLM server is currently up
@@ -111,5 +141,6 @@ tui:
 
 .PHONY: \
 	sanity concurrency-bench co-deploy probe serve \
+	stt-sanity stt-bench mixed-co-deploy download-stt-data \
 	bench-sanity bench-concurrency \
 	logs status stop results gpu-monitor prefetch tui

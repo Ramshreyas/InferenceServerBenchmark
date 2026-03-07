@@ -1,0 +1,32 @@
+# =============================================================================
+# STT Sanity Check — Quick smoke test for speech-to-text models
+# =============================================================================
+# Transcribe a handful of audio files and compute WER against reference
+# transcripts.  Used by `make stt-sanity` for a quick validation that
+# the STT model is serving correctly.
+# =============================================================================
+
+benchmark:
+  name: "STT Sanity Check"
+  description: "Quick smoke test: transcribe 10 audio files and compute WER"
+  output_prefix: "stt_sanity"
+
+model:
+  name: "auto"  # Auto-detected from the running vLLM server
+
+# Dataset: LibriSpeech test-clean (download with assets/download_librispeech.sh)
+dataset:
+  name: "librispeech-test-clean"
+  path: "/assets/librispeech-test-clean/LibriSpeech/test-clean"
+  max_files: 10               # Only transcribe 10 files for sanity check
+
+requests:
+  num_concurrent: 1           # Sequential for sanity check
+  temperature: 0.0            # Recommended by Voxtral docs
+
+telemetry:
+  sample_interval_sec: 2.0
+  collect_gpu_stats: true
+  collect_power_draw: false
+  collect_temperature: false
+  collect_memory_clock: false

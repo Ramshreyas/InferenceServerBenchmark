@@ -1,0 +1,37 @@
+# =============================================================================
+# STT Concurrency Benchmark — Throughput & WER under concurrent streams
+# =============================================================================
+# Measures real-time factor (RTF), WER, and latency under concurrent
+# transcription requests.  Simulates multiple simultaneous audio streams
+# hitting the STT server.
+#
+# See PRD for design rationale.
+# =============================================================================
+
+benchmark:
+  name: "STT Concurrency Benchmark"
+  description: "Concurrent audio transcription: RTF, WER, and latency under load"
+  output_prefix: "stt_concurrency_bench"
+
+model:
+  name: "auto"  # Auto-detected from the running vLLM server
+
+# Dataset: LibriSpeech test-clean (download with assets/download_librispeech.sh)
+dataset:
+  name: "librispeech-test-clean"
+  path: "/assets/librispeech-test-clean/LibriSpeech/test-clean"
+  max_files: 200              # Use up to 200 files for thorough benchmarking
+
+# Concurrency levels to sweep — measures how the model degrades under load
+concurrency_levels: [1, 2, 4, 8]
+
+requests:
+  num_requests: 50            # Per concurrency level
+  temperature: 0.0            # Recommended by Voxtral docs
+
+telemetry:
+  sample_interval_sec: 2.0
+  collect_gpu_stats: true
+  collect_power_draw: false
+  collect_temperature: false
+  collect_memory_clock: false

@@ -21,6 +21,14 @@
 #   loaded_gb       Approximate VRAM when loaded (weights + overhead).
 #                   Used by sweep.py to auto-compute proportional
 #                   gpu_memory_util splits for co-deploy pairs.
+#   modality        text | stt | vlm
+#                   text:  Standard chat/completion model (default).
+#                   stt:   Speech-to-text model (e.g., Voxtral, Whisper).
+#                          Benchmarked with audio files, scored by WER.
+#                   vlm:   Vision-language model — accepts image+text input.
+#                          Benchmarked with image+text prompts (future).
+#                          Same HF model may appear twice: once as text
+#                          (with --language-model-only) and once as vlm.
 #   vllm_extra_flags  (optional) Additional vLLM CLI flags passed verbatim.
 #                   Example: "--language-model-only" to skip vision encoders
 #                   on multimodal models for text-only benchmarks.
@@ -28,6 +36,10 @@
 # Co-deploy pairs: sweep.py auto-computes memory splits proportional to
 #   loaded_gb, within a total budget of 0.92.  Pairs that cannot fit are
 #   skipped automatically.
+#
+# Mixed co-deploy: A text model (role=large) + an STT model (role=small)
+#   can be co-deployed and benchmarked simultaneously to simulate real-world
+#   usage (e.g., meeting transcription + LLM queries at the same time).
 #
 # All models below are publicly available without gated access.
 # =============================================================================
@@ -39,8 +51,9 @@ models:
   # of active-param count — VRAM requirement is determined by total param count.
 
   - name: Sehyo/Qwen3.5-122B-A10B-NVFP4
-    label: qwen35-122b-a10b-nvfp4
+    label: qwen35-122b-a10b-nvfp4-text
     role: large
+    modality: text
     quantization: none          # NVFP4 via compressed-tensors — vLLM auto-detects from checkpoint config; do NOT pass --quantization
     gpu_memory_util: 0.80
     tensor_parallel: 1          # ~65 GB NVFP4 (W4A4) — fits single 96 GB GPU; 0.80 leaves ~19 GB for Triton autotuner scratch on DeltaNet FLA kernels
@@ -48,9 +61,21 @@ models:
     loaded_gb: 65
     vllm_extra_flags: "--language-model-only --enforce-eager --reasoning-parser qwen3"   # enforce-eager: CUDA graphs crash on hybrid DeltaNet+MoE; no --tokenizer needed (native safetensors)
 
+  - name: Sehyo/Qwen3.5-122B-A10B-NVFP4
+    label: qwen35-122b-a10b-nvfp4-vlm
+    role: large
+    modality: vlm
+    quantization: none
+    gpu_memory_util: 0.85
+    tensor_parallel: 1
+    topology: sparse_moe
+    loaded_gb: 70               # ~5 GB more with vision encoder loaded
+    vllm_extra_flags: "--enforce-eager --reasoning-parser qwen3"
+
   - name: openai/gpt-oss-120b
     label: gpt-oss-120b
     role: large
+    modality: text
     quantization: none          # Pre-quantized mxfp4 (Blackwell-native 4-bit)
     gpu_memory_util: 0.95
     tensor_parallel: 1
@@ -60,6 +85,7 @@ models:
   - name: Qwen/Qwen3-Coder-Next-FP8
     label: qwen3-coder-next-fp8
     role: large
+    modality: text
     quantization: none          # Pre-quantized FP8 by Qwen — vLLM auto-detects; do NOT pass --quantization
     gpu_memory_util: 0.90
     tensor_parallel: 1
@@ -70,8 +96,9 @@ models:
   # ── Medium (27B–36B) ─────────────────────────────────────────────────────────
 
   - name: Qwen/Qwen3.5-27B
-    label: qwen35-27b
+    label: qwen35-27b-text
     role: large
+    modality: text
     quantization: fp8           # BF16 ~56 GB; FP8 brings it to ~28 GB
     gpu_memory_util: 0.90
     tensor_parallel: 1
@@ -79,9 +106,21 @@ models:
     loaded_gb: 28
     vllm_extra_flags: "--language-model-only --reasoning-parser qwen3"   # Qwen3.5: skip vision encoder; reasoning-parser required for think-block parsing
 
-  - name: Qwen/Qwen3.5-35B-A3B
-    label: qwen35-35b-a3b
+  - name: Qwen/Qwen3.5-27B
+    label: qwen35-27b-vlm
     role: large
+    modality: vlm
+    quantization: fp8
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+    topology: dense
+    loaded_gb: 32               # ~4 GB more with vision encoder loaded
+    vllm_extra_flags: "--reasoning-parser qwen3"
+
+  - name: Qwen/Qwen3.5-35B-A3B
+    label: qwen35-35b-a3b-text
+    role: large
+    modality: text
     quantization: fp8           # BF16 ~72 GB; FP8 brings it to ~36 GB
     gpu_memory_util: 0.90
     tensor_parallel: 1
@@ -89,9 +128,21 @@ models:
     loaded_gb: 36
     vllm_extra_flags: "--language-model-only --reasoning-parser qwen3"   # Qwen3.5: skip vision encoder; reasoning-parser required for think-block parsing
 
+  - name: Qwen/Qwen3.5-35B-A3B
+    label: qwen35-35b-a3b-vlm
+    role: large
+    modality: vlm
+    quantization: fp8
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+    topology: sparse_moe
+    loaded_gb: 40               # ~4 GB more with vision encoder loaded
+    vllm_extra_flags: "--reasoning-parser qwen3"
+
   - name: zai-org/GLM-4.7-Flash
     label: glm-47-flash
     role: large
+    modality: text
     quantization: none          # BF16; MoE: small active KV footprint
     gpu_memory_util: 0.92
     tensor_parallel: 1
@@ -103,6 +154,7 @@ models:
   - name: nvidia/NVIDIA-Nemotron-Nano-9B-v2
     label: nemotron-nano-9b-v2
     role: small
+    modality: text
     quantization: none          # BF16; hybrid Mamba2-Transformer (nemotron_h)
     gpu_memory_util: 0.85
     tensor_parallel: 1
@@ -110,19 +162,44 @@ models:
     loaded_gb: 18
 
   - name: mistralai/Ministral-3-14B-Instruct-2512
-    label: ministral3-14b
+    label: ministral3-14b-text
     role: small
+    modality: text
     quantization: none          # Pre-quantized FP8; 13.5B LM + 0.4B vision encoder
     gpu_memory_util: 0.85
     tensor_parallel: 1
     topology: dense
     loaded_gb: 14
 
+  - name: mistralai/Ministral-3-14B-Instruct-2512
+    label: ministral3-14b-vlm
+    role: small
+    modality: vlm
+    quantization: none
+    gpu_memory_util: 0.85
+    tensor_parallel: 1
+    topology: dense
+    loaded_gb: 15               # ~1 GB more with vision encoder active
+
   - name: mistralai/Ministral-3-8B-Instruct-2512
     label: ministral3-8b
     role: small
+    modality: text
     quantization: none          # Pre-quantized FP8; ~8.9B params (mistral3)
     gpu_memory_util: 0.85
     tensor_parallel: 1
     topology: dense
     loaded_gb: 9
+
+  # ── STT (Speech-to-Text) ─────────────────────────────────────────────────
+
+  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
+    label: voxtral-mini-4b
+    role: small
+    modality: stt               # Speech-to-text — benchmarked with WER on audio datasets
+    quantization: none          # BF16; 3.4B LLM + 970M Audio Encoder = 4.4B total
+    gpu_memory_util: 0.85
+    tensor_parallel: 1
+    topology: dense
+    loaded_gb: 9
+    vllm_extra_flags: "--compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"

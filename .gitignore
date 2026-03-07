@@ -63,6 +63,10 @@ docker-compose.override.yml
 huggingface_cache/
 models/
 
+# STT datasets (downloaded via assets/download_librispeech.sh)
+assets/librispeech-test-clean/
+assets/*.tar.gz
+
 # System Files
 .DS_Store
 Thumbs.db

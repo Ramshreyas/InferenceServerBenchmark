@@ -145,6 +145,55 @@ services:
     networks:
       - inference-net
 
+  # ── STT benchmark runner (single-model STT: stt-sanity, stt-concurrency-bench)
+  stt-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stt-runner
+    depends_on:
+      vllm-large:
+        condition: service_healthy
+    environment:
+      - VLLM_ENDPOINT=http://vllm-large:8000/v1
+      - CONFIG_PATH=${CONFIG_PATH:-/configs/stt_sanity.yaml}
+    volumes:
+      - ./configs:/configs:ro
+      - ./core:/app/core:ro
+      - ./assets:/assets:ro
+      - ./results:/results
+    command: python /app/core/stt_runner.py --config ${CONFIG_PATH:-/configs/stt_sanity.yaml}
+    networks:
+      - inference-net
+    profiles:
+      - stt-benchmark
+
+  # ── Mixed co-deploy runner (Text + STT simultaneous benchmark) ─────────────
+  mixed-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mixed-runner
+    environment:
+      - VLLM_ENDPOINT_LARGE=http://vllm-large:8000/v1
+      - VLLM_ENDPOINT_SMALL=http://vllm-small:8001/v1
+      - LARGE_MODEL_NAME=${MODEL_NAME:-}
+      - SMALL_MODEL_NAME=${SMALL_MODEL_NAME:-}
+    volumes:
+      - ./configs:/configs:ro
+      - ./core:/app/core:ro
+      - ./assets:/assets:ro
+      - ./results:/results
+    depends_on:
+      vllm-large:
+        condition: service_healthy
+      vllm-small:
+        condition: service_healthy
+    profiles:
+      - co-deploy
+    networks:
+      - inference-net
+
   # ── GPU telemetry (optional) ───────────────────────────────────────────────
   nvitop:
     image: nvidia/cuda:12.3.0-base-ubuntu22.04

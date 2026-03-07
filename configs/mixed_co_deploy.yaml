@@ -1,0 +1,42 @@
+# =============================================================================
+# Mixed Co-Deploy Benchmark — Text + STT simultaneous load
+# =============================================================================
+# Simulates real-world usage: a text LLM and an STT model running
+# simultaneously on the same GPU.  Example scenario: live meeting
+# transcription (STT) while participants also query an LLM.
+#
+# Both models are benchmarked SIMULTANEOUSLY — this measures mutual
+# interference / performance degradation under realistic mixed workloads.
+# =============================================================================
+
+benchmark:
+  name: "Mixed Co-Deploy (Text + STT)"
+  description: "Simultaneous text LLM + STT benchmarking on shared GPU"
+  output_prefix: "mixed_co_deploy"
+
+# ── Text model (large, port 8000) ──────────────────────────────────────────
+text:
+  # Same grid as concurrency-bench for comparability with solo runs
+  prompt_token_lengths: [512, 4096, 16384]
+  output_token_lengths: [256, 512, 1024, 2048]
+  concurrency: 5             # Half of the usual 10 — sharing GPU
+  num_requests: 30           # Per sweep point
+  system_prompt: |
+    You are a helpful AI assistant.
+
+# ── STT model (small, port 8001) ──────────────────────────────────────────
+stt:
+  dataset:
+    name: "librispeech-test-clean"
+    path: "/assets/librispeech-test-clean/LibriSpeech/test-clean"
+    max_files: 100
+  concurrency: 4             # Concurrent transcription streams
+  num_requests: 40           # Total transcription requests
+  temperature: 0.0
+
+telemetry:
+  sample_interval_sec: 2.0
+  collect_gpu_stats: true
+  collect_power_draw: false
+  collect_temperature: false
+  collect_memory_clock: false

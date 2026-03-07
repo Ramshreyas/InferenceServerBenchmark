@@ -30,6 +30,15 @@ BENCH_CONFIGS = {
     # co-deploy uses a separate code path (co_deploy_sweep)
 }
 
+STT_BENCH_CONFIGS = {
+    "stt-sanity":            "/configs/stt_sanity.yaml",
+    "stt-concurrency-bench": "/configs/stt_concurrency_bench.yaml",
+}
+
+MIXED_BENCH_CONFIGS = {
+    "mixed-co-deploy": "/configs/mixed_co_deploy.yaml",
+}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -238,6 +247,21 @@ def run_bench(bench_key: str, sweep_ts: str | None = None, model_tag: str | None
     return result.returncode
 
 
+def run_stt_bench(bench_key: str, sweep_ts: str | None = None, model_tag: str | None = None) -> int:
+    """Run STT benchmark container; return exit code."""
+    config_path = STT_BENCH_CONFIGS[bench_key]
+    cmd = [
+        "docker", "compose", "run", "--rm", "stt-runner",
+        "python", "/app/core/stt_runner.py", "--config", config_path,
+    ]
+    if sweep_ts:
+        cmd += ["--sweep-ts", sweep_ts]
+    if model_tag:
+        cmd += ["--model-tag", model_tag]
+    result = run(cmd, check=False)
+    return result.returncode
+
+
 def section(title: str):
     print(f"\n{'='*60}", flush=True)
     print(f"  {title}", flush=True)
@@ -301,9 +325,104 @@ def compute_co_deploy_memory(large: dict, small: dict) -> tuple[float | None, fl
 # Co-deploy sweep  (Goal 2)
 # ---------------------------------------------------------------------------
 
+def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_stt: str | None = None):
+    """Run mixed co-deploy: text (large) + STT (small) simultaneously."""
+    text_pool = [m for m in models if m.get("role") == "large" and m.get("modality", "text") == "text"]
+    stt_pool = [m for m in models if m.get("modality") == "stt"]
+
+    if label_large:
+        text_pool = [m for m in text_pool if m.get("label") == label_large]
+    if label_stt:
+        stt_pool = [m for m in stt_pool if m.get("label") == label_stt]
+
+    if not text_pool:
+        print("ERROR: No text 'large' role models found.", file=sys.stderr)
+        sys.exit(1)
+    if not stt_pool:
+        print("ERROR: No STT models found (or label filter matched nothing).", file=sys.stderr)
+        sys.exit(1)
+
+    pairs: list[tuple[dict, dict, float, float]] = []
+    for lg, stt in product(text_pool, stt_pool):
+        lg_util, stt_util = compute_co_deploy_memory(lg, stt)
+        if lg_util is None:
+            print(
+                f"SKIP: {lg.get('label')} + {stt.get('label')} — "
+                f"combined VRAM estimate ({lg.get('loaded_gb', '?')}+{stt.get('loaded_gb', '?')} GB) "
+                f"exceeds budget ({GPU_VRAM_GB * CO_DEPLOY_TOTAL_BUDGET:.0f} GB)"
+            )
+        else:
+            pairs.append((lg, stt, lg_util, stt_util))
+
+    if not pairs:
+        print("ERROR: No viable (text, stt) pair fits in VRAM.", file=sys.stderr)
+        sys.exit(1)
+
+    section(f"MIXED CO-DEPLOY SWEEP  |  {len(pairs)} pair(s)")
+    hf_token = os.environ.get("HF_TOKEN")
+    sweep_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    failed = []
+
+    for lg, stt, lg_util, stt_util in pairs:
+        lg_label = lg.get("label", lg["name"].split("/")[-1])
+        stt_label = stt.get("label", stt["name"].split("/")[-1])
+        section(f"MIXED CO-DEPLOY: {lg_label} ({lg_util:.0%}) + {stt_label} ({stt_util:.0%})")
+
+        write_env_dual(lg, stt, lg_util=lg_util, sm_util=stt_util, hf_token=hf_token)
+
+        running_lg = _get_running_model(port=8000)
+        running_stt = _get_running_model(port=8001)
+        if running_lg == lg["name"] and running_stt == stt["name"]:
+            print(f">>> {lg_label} + {stt_label} already running — reusing containers", flush=True)
+        else:
+            compose_down_all()
+
+            print(">>> Starting vllm-large first (sequential to avoid memory race)…", flush=True)
+            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large"])
+            try:
+                wait_for_vllm(port=8000, timeout=1800)
+            except TimeoutError as e:
+                print(f"  *** TIMEOUT (vllm-large): {e}", file=sys.stderr)
+                run(["docker", "logs", "--tail", "80", "vllm-large"], check=False)
+                failed.append(f"{lg_label}+{stt_label}")
+                compose_down_all(check=False)
+                continue
+
+            print(">>> vllm-large healthy — now starting vllm-small (STT)…", flush=True)
+            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-small"])
+            try:
+                wait_for_vllm(port=8001, timeout=1800)
+            except TimeoutError as e:
+                print(f"  *** TIMEOUT (vllm-small/STT): {e}", file=sys.stderr)
+                run(["docker", "logs", "--tail", "80", "vllm-small"], check=False)
+                failed.append(f"{lg_label}+{stt_label}")
+                compose_down_all(check=False)
+                continue
+
+        try:
+            pair_tag = f"{lg_label}+{stt_label}"
+            run([
+                "docker", "compose", "--profile", "co-deploy",
+                "run", "--rm", "mixed-runner",
+                "python", "/app/core/mixed_co_deploy_runner.py",
+                "--config", "/configs/mixed_co_deploy.yaml",
+                "--sweep-ts", sweep_ts,
+                "--model-tag", pair_tag,
+            ])
+        except Exception as e:
+            print(f"  *** BENCH FAILED: {e}", file=sys.stderr)
+            failed.append(f"{lg_label}+{stt_label}")
+        finally:
+            compose_down_all(check=False)
+
+    section("MIXED CO-DEPLOY SWEEP COMPLETE")
+    if failed:
+        print(f"WARNING: {len(failed)} pair(s) failed: {failed}")
+
+
 def co_deploy_sweep(models: list, label_large: str | None = None, label_small: str | None = None):
-    large_pool = [m for m in models if m.get("role") == "large"]
-    small_pool = [m for m in models if m.get("role") == "small"]
+    large_pool = [m for m in models if m.get("role") == "large" and m.get("modality", "text") == "text"]
+    small_pool = [m for m in models if m.get("role") == "small" and m.get("modality", "text") == "text"]
 
     if label_large:
         large_pool = [m for m in large_pool if m.get("label") == label_large]
@@ -457,7 +576,11 @@ def _print_report_card(bench_key: str, report: list[tuple[str, str, str]]):
 # ---------------------------------------------------------------------------
 
 def main():
-    all_bench_choices = list(BENCH_CONFIGS.keys()) + ["co-deploy"]
+    all_bench_choices = (
+        list(BENCH_CONFIGS.keys())
+        + list(STT_BENCH_CONFIGS.keys())
+        + ["co-deploy", "mixed-co-deploy"]
+    )
 
     parser = argparse.ArgumentParser(
         description="Sweep benchmarks over all models listed in models.yaml"
@@ -485,11 +608,15 @@ def main():
     )
     parser.add_argument(
         "--label-large",
-        help="(co-deploy only) Filter large-role models to this label",
+        help="(co-deploy / mixed-co-deploy) Filter large-role models to this label",
     )
     parser.add_argument(
         "--label-small",
-        help="(co-deploy only) Filter small-role models to this label",
+        help="(co-deploy only) Filter small-role text models to this label",
+    )
+    parser.add_argument(
+        "--label-stt",
+        help="(mixed-co-deploy only) Filter STT models to this label",
     )
     args = parser.parse_args()
 
@@ -498,9 +625,13 @@ def main():
 
     models = load_models(args.models_file)
 
-    # ── Co-deploy: separate code path ─────────────────────────────────────────
+    # ── Co-deploy: separate code paths ─────────────────────────────────────────
     if args.bench == "co-deploy":
         co_deploy_sweep(models, label_large=args.label_large, label_small=args.label_small)
+        return
+
+    if args.bench == "mixed-co-deploy":
+        mixed_co_deploy_sweep(models, label_large=args.label_large, label_stt=args.label_stt)
         return
 
     # Filter by label if requested (for single-model benchmarks)
@@ -515,9 +646,13 @@ def main():
         if len(models) != 1:
             parser.error("--serve-only requires exactly one model; use --label to select one")
         label = models[0].get("label", models[0]["name"].split("/")[-1])
-        section(f"SERVE: {models[0]['name']}  (label={label})")
-        serve_model(models[0], enable_prefix_caching=True)
-        print("Server is ready. Run `make bench-<name>` to benchmark against it.")
+        modality = models[0].get("modality", "text")
+        section(f"SERVE: {models[0]['name']}  (label={label}, modality={modality})")
+        serve_model(models[0], enable_prefix_caching=(modality == "text"))
+        if modality == "stt":
+            print("STT server is ready. Run `make stt-sanity` or `make stt-bench` to benchmark.")
+        else:
+            print("Server is ready. Run `make bench-<name>` to benchmark against it.")
         return
 
     # ── Probe mode: auto-detect max_model_len for each model ─────────────────
@@ -549,8 +684,22 @@ def main():
             print()
         return
 
-    # ── Single-model sweep: serve → bench for each model ──────────────────────
+    # ── Determine if this is an STT or text bench ────────────────────────────
     bench_key = args.bench
+    is_stt_bench = bench_key in STT_BENCH_CONFIGS
+
+    # Filter models by modality: text benches only run text models, STT only STT
+    if is_stt_bench:
+        models = [m for m in models if m.get("modality") == "stt"]
+        if not models:
+            print("ERROR: No STT models found in models.yaml (need modality: stt)", file=sys.stderr)
+            sys.exit(1)
+    else:
+        models = [m for m in models if m.get("modality", "text") == "text"]
+        if not models:
+            print("ERROR: No text models found in models.yaml", file=sys.stderr)
+            sys.exit(1)
+
     sweep_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     section(f"SWEEP: {bench_key}  |  {len(models)} model(s)  |  sweep_ts={sweep_ts}")
 
@@ -558,8 +707,9 @@ def main():
 
     for i, model in enumerate(models, 1):
         label = model.get("label", model["name"].split("/")[-1])
+        modality = model.get("modality", "text")
 
-        # Context-window fitness check
+        # Context-window fitness check (text models only)
         if bench_key in ("concurrency-bench",):
             if not context_window_check(model, bench_key):
                 max_len = model.get("max_model_len", "?")
@@ -568,9 +718,9 @@ def main():
                 report.append((label, "SKIP", detail))
                 continue
 
-        print(f"\n[{i}/{len(models)}] Serving: {model['name']}  (label={label})")
+        print(f"\n[{i}/{len(models)}] Serving: {model['name']}  (label={label}, modality={modality})")
         try:
-            serve_model(model, enable_prefix_caching=True)
+            serve_model(model, enable_prefix_caching=(modality == "text"))
         except Exception as e:
             msg = str(e)
             print(f"  *** FAILED to start {label}: {msg} — skipping", file=sys.stderr)
@@ -578,7 +728,10 @@ def main():
             continue
 
         print(f"[{i}/{len(models)}] Benchmarking: {bench_key}")
-        exit_code = run_bench(bench_key, sweep_ts=sweep_ts, model_tag=label)
+        if is_stt_bench:
+            exit_code = run_stt_bench(bench_key, sweep_ts=sweep_ts, model_tag=label)
+        else:
+            exit_code = run_bench(bench_key, sweep_ts=sweep_ts, model_tag=label)
         if exit_code == 0:
             report.append((label, "PASS", "all requests succeeded"))
         elif exit_code == 1:

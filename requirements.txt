@@ -6,6 +6,9 @@ pyyaml>=6.0
 requests
 tqdm>=4.60.0
 
+# STT benchmarking (audio file handling + WER)
+soundfile>=0.12.0
+
 # TUI dashboard
 textual>=0.40.0
 rich>=13.0.0
