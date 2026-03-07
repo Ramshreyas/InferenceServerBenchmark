@@ -1,22 +1,25 @@
 # Blackwell Private Inference Testbench
 
-A containerized benchmarking suite for making two specific deployment decisions on an **NVIDIA RTX PRO 6000 (96 GB Blackwell)**:
+A containerized benchmarking suite for making deployment decisions on an **NVIDIA RTX PRO 6000 (96 GB Blackwell)**:
 
 | Decision | Question |
 |---|---|
 | **Goal 1** | Which single model delivers the best P95 TTFT and ITL under sustained 10-user concurrency? |
 | **Goal 2** | Which (large + small) model pair delivers the best P95 TTFT and ITL under sustained 10-user concurrency? |
+| **Goal 3** | What STT (speech-to-text) throughput and WER can we achieve? |
+| **Goal 4** | Can we co-deploy a text LLM + STT model and handle both workloads simultaneously? |
 
-Everything in this repository exists to answer those two questions. Nothing else.
+The suite supports three modalities: **text** (chat/completion), **STT** (speech-to-text with WER scoring), and **VLM** (vision-language — future).
 
 ---
 
 ## Architecture
 
 ```
-Layer 1 — You edit this:    models.yaml        ← model list, roles, VRAM budget
+Layer 1 — You edit this:    models.yaml        ← model list, roles, VRAM budget, modality
 Layer 2 — Benchmark params: configs/*.yaml     ← prompt/output sweeps, concurrency, telemetry
 Layer 3 — Infrastructure:   Makefile + docker-compose.yml  ← never touch
+Layer 4 — Assets:           assets/            ← STT datasets (LibriSpeech)
 ```
 
 **The only file you need to edit is `models.yaml`.**
@@ -30,6 +33,8 @@ Everything else is driven by `make`.
 | `vllm-small` | 8001 | Secondary server (co-deploy profile only) |
 | `bench-runner` | — | Benchmark runner for single-model benchmarks |
 | `co-runner` | — | Benchmark runner for co-deploy (Goal 2) |
+| `stt-runner` | — | STT benchmark runner (Goal 3) |
+| `mixed-runner` | — | Mixed text+STT co-deploy runner (Goal 4) |
 
 ---
 
@@ -90,11 +95,19 @@ Starts vLLM with Ministral-3 8B, runs 10 test requests, prints TTFT / ITL / thro
 ### 5. Run Benchmarks
 
 ```bash
-# Step 1 — Goal 1: Find the best single model
+# Goal 1: Find the best single model
 make concurrency-bench
 
-# Step 2 — Goal 2: Find the best co-deploy pair
+# Goal 2: Find the best co-deploy pair
 make co-deploy
+
+# Goal 3: STT benchmarking (download dataset first)
+make download-stt-data
+make stt-sanity LABEL=voxtral-mini-4b
+make stt-bench LABEL=voxtral-mini-4b
+
+# Goal 4: Mixed text + STT co-deploy
+make mixed-co-deploy LABEL_LARGE=gpt-oss-120b LABEL_STT=voxtral-mini-4b
 ```
 
 ---
@@ -105,23 +118,45 @@ Edit `models.yaml`:
 
 ```yaml
 models:
+  # Text model
   - name: openai/gpt-oss-120b
     label: gpt-oss-120b
     role: large                  # large | small
+    modality: text               # text | stt | vlm
     quantization: none           # Pre-quantized mxfp4
     gpu_memory_util: 0.95        # for solo benchmarks
     tensor_parallel: 1
     topology: dense
     loaded_gb: 60                # approximate VRAM when loaded
 
-  - name: mistralai/Ministral-3-8B-Instruct-2512
-    label: ministral3-8b
+  # STT model
+  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
+    label: voxtral-mini-4b
     role: small
-    quantization: none           # Pre-quantized FP8
+    modality: stt
+    quantization: none
     gpu_memory_util: 0.85
     tensor_parallel: 1
     topology: dense
     loaded_gb: 9
+    vllm_extra_flags: "--compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
+
+  # VLM-capable model — dual entries (text + vlm)
+  - name: Qwen/Qwen3.5-27B
+    label: qwen35-27b-text       # text mode: skip vision encoder
+    role: large
+    modality: text
+    quantization: fp8
+    loaded_gb: 28
+    vllm_extra_flags: "--language-model-only --reasoning-parser qwen3"
+
+  - name: Qwen/Qwen3.5-27B
+    label: qwen35-27b-vlm        # vlm mode: vision encoder loaded
+    role: large
+    modality: vlm
+    quantization: fp8
+    loaded_gb: 32
+    vllm_extra_flags: "--reasoning-parser qwen3"
 ```
 
 | Field | Options | Notes |
@@ -129,12 +164,22 @@ models:
 | `name` | HuggingFace model ID | Set `HF_TOKEN` for gated models |
 | `label` | any slug | Used in CLI (`LABEL=`) and output filenames |
 | `role` | `large`, `small` | Determines endpoint in co-deploy |
+| `modality` | `text`, `stt`, `vlm` | Routes to the correct benchmark runner |
 | `quantization` | `none`, `fp8`, `awq`, `gptq` | FP8 recommended for 70B+ on Blackwell |
 | `gpu_memory_util` | 0.0 – 1.0 | For solo benchmarks; co-deploy splits are auto-computed |
 | `tensor_parallel` | integer | 1 for single-GPU |
 | `topology` | `dense`, `sparse_moe` | MoE models load all expert weights into VRAM |
 | `loaded_gb` | integer | Approximate loaded VRAM; used to auto-compute co-deploy memory splits |
 | `vllm_extra_flags` | string (optional) | Additional vLLM CLI flags passed verbatim (e.g. `--language-model-only`) |
+
+### Modality & VLM Dual Entries
+
+Models that support both text and vision (e.g., Qwen3.5, Ministral-3) appear **twice** in `models.yaml`:
+
+- **text entry**: uses `--language-model-only` to skip the vision encoder (lower VRAM, text-only benchmarks)
+- **vlm entry**: loads the full model with vision encoder (higher `loaded_gb`, future VLM benchmarks)
+
+`sweep.py` filters models by modality — text benchmarks only see `modality: text`, STT benchmarks only see `modality: stt`, etc.
 
 ### Co-deploy Memory Allocation
 
@@ -180,6 +225,33 @@ make co-deploy LABEL_LARGE=gpt-oss-120b LABEL_SMALL=ministral3-8b          # one
 
 Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D sweep as Goal 1. Per-endpoint P95 TTFT/ITL reported independently.
 
+### 3. Goal 3 — STT (Speech-to-Text) Benchmark
+
+> "What WER and throughput can we get from the STT model?"
+
+```bash
+# Download the LibriSpeech test-clean dataset first
+make download-stt-data
+
+# Quick smoke test (10 audio files)
+make stt-sanity LABEL=voxtral-mini-4b
+
+# Full concurrency benchmark (sweep over concurrent streams)
+make stt-bench LABEL=voxtral-mini-4b
+```
+
+Transcribes audio files from LibriSpeech test-clean via `/v1/audio/transcriptions`, computes **WER** (Word Error Rate) against reference transcripts, and measures **RTF** (Real-Time Factor). Concurrency sweep tests throughput under parallel streams.
+
+### 4. Goal 4 — Mixed Co-Deploy (Text + STT)
+
+> "Can we run text and STT simultaneously on one GPU?"
+
+```bash
+make mixed-co-deploy LABEL_LARGE=gpt-oss-120b LABEL_STT=voxtral-mini-4b
+```
+
+Co-deploys a text LLM + STT model on the same GPU and benchmarks both simultaneously. Text requests exercise the chat/completion endpoint while STT requests transcribe audio files — mimicking real-world usage (e.g., meeting transcription + LLM queries at the same time). Reports independent metrics for each endpoint.
+
 ---
 
 ## Reference — All Make Targets
@@ -189,6 +261,10 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 | `make sanity [LABEL=]` | Quick 10-request validation |
 | `make concurrency-bench [LABEL=]` | Goal 1 — rank single-tenant models |
 | `make co-deploy [LABEL_LARGE= LABEL_SMALL=]` | Goal 2 — rank co-deploy pairs |
+| `make download-stt-data` | Download LibriSpeech test-clean dataset |
+| `make stt-sanity [LABEL=]` | Goal 3 — quick 10-file STT smoke test |
+| `make stt-bench [LABEL=]` | Goal 3 — STT concurrency benchmark |
+| `make mixed-co-deploy [LABEL_LARGE= LABEL_STT=]` | Goal 4 — text + STT simultaneous benchmark |
 | `make probe [LABEL=]` | Auto-detect max_model_len for models |
 | `make serve LABEL=<label>` | Start vLLM for one model (no bench) |
 | `make prefetch` | Pre-download all models to HF cache |
@@ -207,22 +283,32 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 
 ```
 .
-├── models.yaml                  ← EDIT THIS — model list with roles and VRAM estimates
+├── models.yaml                  ← EDIT THIS — model list with roles, VRAM, modality
 ├── PRD.md                       ← Full design specification
+├── GATEWAY.md                   ← Gateway integration notes
 ├── Makefile                     ← All make targets
-├── docker-compose.yml           ← vllm-large, vllm-small, bench-runner, co-runner
-├── Dockerfile                   ← bench-runner / co-runner image
+├── docker-compose.yml           ← vllm-large/small, bench/co/stt/mixed runners
+├── Dockerfile                   ← Runner images (includes soundfile for STT)
 ├── core/
 │   ├── sweep.py                 ← Iterates models.yaml, drives docker compose
 │   ├── bench_runner.py          ← Single-model benchmark (sanity, concurrency)
 │   ├── co_deploy_runner.py      ← Split-load benchmark against two endpoints (Goal 2)
+│   ├── stt_runner.py            ← STT benchmark — WER, RTF, concurrency sweep (Goal 3)
+│   ├── mixed_co_deploy_runner.py ← Simultaneous text+STT benchmark (Goal 4)
 │   ├── prefetch.py              ← Pre-downloads all models to HF cache
 │   ├── telemetry.py             ← GPU monitoring via nvidia-smi
 │   └── utils.py                 ← Logging, serialization helpers
 ├── configs/
 │   ├── sanity_check.yaml        ← 10 sequential requests, quick validation
 │   ├── concurrency_bench.yaml   ← Goal 1: 2-D prompt×output sweep, 10 concurrent, 200 req
-│   └── split_load.yaml          ← Goal 2: same 2-D sweep, 70/30 traffic split
+│   ├── split_load.yaml          ← Goal 2: same 2-D sweep, 70/30 traffic split
+│   ├── stt_sanity.yaml          ← Goal 3: 10-file STT smoke test
+│   ├── stt_concurrency_bench.yaml ← Goal 3: STT concurrency sweep [1,2,4,8]
+│   └── mixed_co_deploy.yaml     ← Goal 4: text + STT simultaneous benchmark
+├── assets/
+│   ├── download_librispeech.sh  ← Downloads LibriSpeech test-clean (~346 MB)
+│   ├── librispeech-test-clean/  ← Dataset (gitignored, created by download script)
+│   └── README.md                ← Asset documentation
 ├── tui/
 │   ├── data.py                  ← Result discovery, sweep grouping, CSV merging
 │   ├── results_tab.py           ← Charts, minimap, scorecard, model filter
@@ -253,12 +339,24 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 | `split_load_{ts}_detailed.json` | Per-request, tagged `endpoint: large\|small` |
 | `split_load_{ts}_summary.csv` | **Goal 2 ranking table** — per-endpoint P50/P95/P99 |
 | `split_load_{ts}_telemetry.json` | GPU telemetry for co-deploy run |
+| `stt_sanity_{ts}_detailed.json` | Per-file STT results (transcriptions, WER, RTF) |
+| `stt_sanity_{ts}_summary.csv` | STT sanity stats |
+| `stt_concurrency_{ts}_detailed.json` | STT results under concurrent load |
+| `stt_concurrency_{ts}_summary.csv` | **Goal 3** — WER, RTF, throughput by concurrency level |
+| `mixed_co_deploy_{ts}_detailed.json` | Text + STT per-request results |
+| `mixed_co_deploy_{ts}_summary.csv` | **Goal 4** — independent metrics for both endpoints |
 
 ### Key Metrics
 
+**Text / VLM:**
 - **TTFT** (Time to First Token) — latency until first token streams back. P95 is the primary ranking metric.
 - **ITL** (Inter-Token Latency) — average time between consecutive tokens. Must be < 100 ms for smooth streaming.
 - **Throughput** — tokens generated per second.
+
+**STT:**
+- **WER** (Word Error Rate) — edit distance between transcription and reference, normalized by reference length. Lower is better.
+- **RTF** (Real-Time Factor) — processing time / audio duration. RTF < 1.0 means faster than real-time.
+- **Throughput** — audio seconds processed per wall-clock second under concurrent load.
 
 ---
 
@@ -274,6 +372,18 @@ Two vLLM instances on one GPU. 70% traffic to large, 30% to small. Same 2-D swee
 1. From `split_load_*_summary.csv`, select the `(prompt, output)` row matching your workload.
 2. Rank by `large_P95_ttft_ms` ascending.
 3. Discard pairs where `small_P95_itl_ms > 100 ms`.
+
+### Goal 3 — STT Quality & Throughput
+
+1. From `stt_*_summary.csv`, check `mean_wer` — acceptable range depends on domain (< 5% for clean speech).
+2. Check `mean_rtf` — must be < 1.0 for real-time transcription.
+3. Review throughput at target concurrency level.
+
+### Goal 4 — Mixed Co-Deploy Feasibility
+
+1. From mixed co-deploy results, verify text metrics (TTFT, ITL) remain acceptable under STT co-load.
+2. Verify STT WER does not degrade compared to solo STT benchmarks.
+3. If both metrics hold, the pair is viable for production co-deployment.
 
 See [PRD.md](PRD.md) §9 for the full decision framework.
 
@@ -328,6 +438,8 @@ Individual runs within a sweep can still be expanded and viewed separately.
 
 - **⚡ Concurrency Bench** — dual charts + minimap + scorecard (sweep-grouped)
 - **🔀 Co-Deploy** — dual charts for (large + small) model pairs
+- **🎤 STT Bench** — WER, RTF, throughput under concurrent streams
+- **🎤+⚡ Mixed Co-Deploy** — text + STT simultaneous benchmark
 - **✅ Sanity Check** — simple table view
 
 ---
