@@ -6,49 +6,27 @@
 # which wastes ~6 GB VRAM and loses the throughput benefit of native FP4
 # tensor-core ops.
 #
-# This image installs the official gpt-oss vLLM wheel from OpenAI.
+# Strategy: start from the stock vLLM nightly (which already has torch, CUDA,
+# and all runtime deps), then swap in the gpt-oss vLLM wheel on top.
+# We use --no-deps so it doesn't try to resolve the pinned torch nightly
+# that has been rotated out of PyTorch's rolling index.
 #
 # Build:
 #   docker build -f Dockerfile.vllm-gptoss -t vllm-gptoss:latest .
 # =============================================================================
 
-FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
+FROM vllm/vllm-openai:cu130-nightly
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-# System deps + deadsnakes PPA for Python 3.12 (not in Jammy default repos)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        software-properties-common \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
-        python3.12 python3.12-venv python3.12-dev \
-        curl git build-essential \
-        libsndfile1 libsox-fmt-all \
-    && rm -rf /var/lib/apt/lists/*
-
-# Make python3.12 the default
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
-
-# Install uv (fast Python package manager recommended by vLLM / OpenAI)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
-
-# Create venv and install the gpt-oss vLLM wheel
-RUN uv venv /opt/vllm-env --python 3.12 --seed
-ENV VIRTUAL_ENV=/opt/vllm-env
-ENV PATH="/opt/vllm-env/bin:$PATH"
-
-RUN uv pip install --pre vllm==0.10.1+gptoss \
-        --extra-index-url https://wheels.vllm.ai/gpt-oss/ \
-        --extra-index-url https://download.pytorch.org/whl/nightly/cu128 \
-        --index-strategy unsafe-best-match
+# Install the gpt-oss vLLM wheel over the stock vllm, skipping dependency
+# resolution (torch + cuda already satisfied by the base image).
+RUN pip install --no-cache-dir --no-deps --pre vllm==0.10.1+gptoss \
+        --extra-index-url https://wheels.vllm.ai/gpt-oss/
 
 # Audio processing libs (shared with stock entrypoint)
-RUN uv pip install soxr librosa soundfile 'mistral-common[audio]'
+RUN pip install --no-cache-dir soxr librosa soundfile 'mistral-common[audio]'
 
 # Upgrade transformers (consistency with entrypoint.sh)
-RUN uv pip install --upgrade transformers
+RUN pip install --no-cache-dir --upgrade transformers
 
 # Copy the entrypoint wrapper (same as stock, delegates to `vllm serve`)
 COPY scripts/vllm-entrypoint.sh /usr/local/bin/vllm-entrypoint.sh
