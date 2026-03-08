@@ -237,10 +237,20 @@ def _dump_container_logs(
             capture_output=True, text=True, timeout=60,
         )
         full_log = result.stdout + ("\n--- STDERR ---\n" + result.stderr if result.stderr else "")
-        log_path.write_text(full_log)
+        # Try direct write first; fall back to sudo tee if permission denied
+        try:
+            log_path.write_text(full_log)
+        except PermissionError:
+            subprocess.run(
+                ["sudo", "tee", str(log_path)],
+                input=full_log, text=True, capture_output=True, timeout=10,
+            )
         print(f"  ** Full container logs saved → {log_path}", flush=True)
     except Exception as e:
         print(f"  WARNING: Could not capture full logs for {container_name}: {e}", file=sys.stderr)
+        # Still print logs to stdout even if file write failed
+        print(f"  --- {container_name} logs (last {tail_lines} lines) ---", flush=True)
+        run(["docker", "logs", "--tail", str(tail_lines), container_name], check=False)
         return None
 
     # Print tail for immediate visibility
