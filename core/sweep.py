@@ -213,6 +213,43 @@ def _container_is_running(container_name: str) -> bool | None:
         return None
 
 
+def _dump_container_logs(
+    container_name: str,
+    context: str = "",
+    results_dir: str = "results",
+    tail_lines: int = 200,
+) -> str | None:
+    """Capture full container logs to a timestamped file in results/.
+
+    Also prints the last *tail_lines* to stdout for immediate visibility.
+    Returns the path of the saved log file, or None on failure.
+    """
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    slug = context.replace(" ", "_").replace("/", "-") if context else "crash"
+    log_filename = f"{container_name}_{slug}_{ts}.log"
+    log_path = Path(results_dir) / log_filename
+    Path(results_dir).mkdir(exist_ok=True)
+
+    # Capture full logs to file
+    try:
+        result = subprocess.run(
+            ["docker", "logs", container_name],
+            capture_output=True, text=True, timeout=60,
+        )
+        full_log = result.stdout + ("\n--- STDERR ---\n" + result.stderr if result.stderr else "")
+        log_path.write_text(full_log)
+        print(f"  ** Full container logs saved → {log_path}", flush=True)
+    except Exception as e:
+        print(f"  WARNING: Could not capture full logs for {container_name}: {e}", file=sys.stderr)
+        return None
+
+    # Print tail for immediate visibility
+    print(f"  --- {container_name} logs (last {tail_lines} lines) ---", flush=True)
+    run(["docker", "logs", "--tail", str(tail_lines), container_name], check=False)
+
+    return str(log_path)
+
+
 def wait_for_vllm(
     host: str = "localhost",
     port: int = 8000,
@@ -239,11 +276,15 @@ def wait_for_vllm(
                     f"\n  *** Container '{container_name}' is no longer running!",
                     file=sys.stderr, flush=True,
                 )
-                print(f"  --- {container_name} logs (last 120 lines) ---", flush=True)
-                run(["docker", "logs", "--tail", "120", container_name], check=False)
+                log_path = _dump_container_logs(
+                    container_name,
+                    context="startup-crash",
+                    tail_lines=200,
+                )
                 raise RuntimeError(
                     f"Container '{container_name}' exited before becoming healthy. "
-                    f"Check the logs above for the root cause (OOM, model-load error, missing deps, etc.)."
+                    f"Full logs saved to {log_path or '(capture failed)'}. "
+                    f"Check for OOM, model-load error, CUDA graph crash, or missing deps."
                 )
         # ---- health probe ----------------------------------------------------
         try:
@@ -252,6 +293,9 @@ def wait_for_vllm(
             return
         except Exception:
             time.sleep(10)
+    # Timeout — dump logs before raising so the operator can diagnose
+    if container_name:
+        _dump_container_logs(container_name, context="timeout", tail_lines=120)
     raise TimeoutError(f"vLLM did not become ready within {timeout}s")
 
 
@@ -359,8 +403,8 @@ def context_window_check(model: dict, bench_key: str) -> bool:
 # ---------------------------------------------------------------------------
 
 GPU_VRAM_GB = 96.0
-CO_DEPLOY_TOTAL_BUDGET = 0.92   # leave 8% for CUDA context / driver overhead
-CO_DEPLOY_HEADROOM = 1.15       # 15% headroom over loaded_gb for KV cache / activations
+CO_DEPLOY_TOTAL_BUDGET = 0.88   # leave 12% for CUDA context / driver / Triton scratch
+CO_DEPLOY_HEADROOM = 1.25       # 25% headroom over loaded_gb for KV cache / activations
 
 def compute_co_deploy_memory(large: dict, small: dict) -> tuple[float | None, float | None]:
     """Return (large_util, small_util) proportional to loaded_gb, or (None, None) if pair cannot fit."""
@@ -449,7 +493,7 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
                 wait_for_vllm(port=8000, timeout=1800, container_name="vllm-large")
             except (TimeoutError, RuntimeError) as e:
                 print(f"  *** FAILED (vllm-large): {e}", file=sys.stderr)
-                run(["docker", "logs", "--tail", "80", "vllm-large"], check=False)
+                _dump_container_logs("vllm-large", context=f"mixed_{lg_label}")
                 failed.append(f"{lg_label}+{stt_label}")
                 compose_down_all(check=False)
                 continue
@@ -460,7 +504,8 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
                 wait_for_vllm(port=8001, timeout=1800, container_name="vllm-small")
             except (TimeoutError, RuntimeError) as e:
                 print(f"  *** FAILED (vllm-small/STT): {e}", file=sys.stderr)
-                run(["docker", "logs", "--tail", "80", "vllm-small"], check=False)
+                _dump_container_logs("vllm-small", context=f"mixed_{stt_label}")
+                _dump_container_logs("vllm-large", context=f"mixed_{lg_label}_when-stt-failed")
                 failed.append(f"{lg_label}+{stt_label}")
                 compose_down_all(check=False)
                 continue
@@ -477,6 +522,8 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
             ])
         except Exception as e:
             print(f"  *** BENCH FAILED: {e}", file=sys.stderr)
+            _dump_container_logs("vllm-large", context=f"mixed-benchfail_{lg_label}")
+            _dump_container_logs("vllm-small", context=f"mixed-benchfail_{stt_label}")
             failed.append(f"{lg_label}+{stt_label}")
         finally:
             compose_down_all(check=False)
@@ -548,8 +595,7 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
                 wait_for_vllm(port=8000, timeout=1800, container_name="vllm-large")
             except (TimeoutError, RuntimeError) as e:
                 print(f"  *** FAILED (vllm-large): {e}", file=sys.stderr)
-                print("  --- vllm-large logs (last 80 lines) ---", flush=True)
-                run(["docker", "logs", "--tail", "80", "vllm-large"], check=False)
+                _dump_container_logs("vllm-large", context=f"co-deploy_{lg_label}")
                 failed.append(f"{lg_label}+{sm_label}")
                 compose_down_all(check=False)
                 continue
@@ -560,8 +606,9 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
                 wait_for_vllm(port=8001, timeout=1800, container_name="vllm-small")
             except (TimeoutError, RuntimeError) as e:
                 print(f"  *** FAILED (vllm-small): {e}", file=sys.stderr)
-                print("  --- vllm-small logs (last 80 lines) ---", flush=True)
-                run(["docker", "logs", "--tail", "80", "vllm-small"], check=False)
+                _dump_container_logs("vllm-small", context=f"co-deploy_{sm_label}")
+                # Also capture the large container logs — it may have OOM'd after small started
+                _dump_container_logs("vllm-large", context=f"co-deploy_{lg_label}_when-small-failed")
                 failed.append(f"{lg_label}+{sm_label}")
                 compose_down_all(check=False)
                 continue
@@ -578,6 +625,8 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
             ])
         except Exception as e:
             print(f"  *** BENCH FAILED: {e}", file=sys.stderr)
+            _dump_container_logs("vllm-large", context=f"co-deploy-benchfail_{lg_label}")
+            _dump_container_logs("vllm-small", context=f"co-deploy-benchfail_{sm_label}")
             failed.append(f"{lg_label}+{sm_label}")
         finally:
             compose_down_all(check=False)
