@@ -203,3 +203,14 @@ models:
     topology: dense
     loaded_gb: 9
     vllm_extra_flags: "--compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
+
+  - name: mistralai/Voxtral-Mini-3B-2507
+    label: voxtral-mini-3b
+    role: small
+    modality: stt               # Speech-to-text — benchmarked with WER on audio datasets
+    quantization: none          # ~3B params
+    gpu_memory_util: 0.85
+    tensor_parallel: 1
+    topology: dense
+    loaded_gb: 6
+    vllm_extra_flags: "--tokenizer_mode mistral --config_format mistral --load_format mistral"
