@@ -6,11 +6,12 @@
 # which wastes ~6 GB VRAM and loses the throughput benefit of native FP4
 # tensor-core ops.
 #
-# This follows the official OpenAI cookbook instructions exactly:
-#   https://developers.openai.com/cookbook/articles/gpt-oss/run-vllm
-#
-# The key is using `uv` (not pip) with --index-strategy unsafe-best-match,
-# which correctly resolves the pinned torch nightly from the cu128 index.
+# The original cookbook (https://developers.openai.com/cookbook/articles/gpt-oss/run-vllm)
+# pinned torch==2.9.0.dev20250804+cu128 which has been rotated off PyTorch's
+# nightly index (openai/openai-cookbook#2330).  The community-verified fix
+# (openai/openai-cookbook#2334, #2330) is:
+#   1. Install STABLE torch 2.9.0+cu128 via direct wheel URL
+#   2. Install vllm from gpt-oss wheels with --index-strategy unsafe-best-match
 #
 # Build:
 #   docker build -f Dockerfile.vllm-gptoss -t vllm-gptoss:latest .
@@ -37,14 +38,23 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# Create venv and install vLLM+gptoss exactly per the official cookbook
+# Create venv
 RUN uv venv /opt/vllm-env --python 3.12 --seed
 ENV VIRTUAL_ENV=/opt/vllm-env
 ENV PATH="/opt/vllm-env/bin:$PATH"
 
-RUN uv pip install --pre vllm==0.10.1+gptoss \
+# Step 1: Install STABLE PyTorch 2.9.0+cu128 via direct wheel URL.
+# The gpt-oss vllm wheel pins torch==2.9.0.dev20250804+cu128 (expired nightly),
+# but stable 2.9.0+cu128 is ABI-compatible and verified by the community
+# (openai/openai-cookbook#2330).
+RUN uv pip install \
+        "https://download.pytorch.org/whl/cu128/torch-2.9.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl"
+
+# Step 2: Install vLLM from gpt-oss wheels.
+# --pre allows pre-release versions, --index-strategy unsafe-best-match lets
+# uv accept the already-installed stable torch as satisfying the pinned dep.
+RUN uv pip install --pre vllm \
         --extra-index-url https://wheels.vllm.ai/gpt-oss/ \
-        --extra-index-url https://download.pytorch.org/whl/nightly/cu128 \
         --index-strategy unsafe-best-match
 
 # Audio processing libs (shared with stock entrypoint)
