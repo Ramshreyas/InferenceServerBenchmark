@@ -195,11 +195,57 @@ def compose_up(args: list[str], retries: int = 3, delay: float = 5.0):
     run(cmd, check=True)
 
 
-def wait_for_vllm(host: str = "localhost", port: int = 8000, timeout: int = 600):
+def _container_is_running(container_name: str) -> bool | None:
+    """Check if a Docker container is still running.
+
+    Returns True if running, False if exited/dead, None if inspect failed.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Status}}", container_name],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        status = result.stdout.strip().lower()
+        return status in ("running", "created", "restarting")
+    except Exception:
+        return None
+
+
+def wait_for_vllm(
+    host: str = "localhost",
+    port: int = 8000,
+    timeout: int = 600,
+    container_name: str | None = None,
+):
+    """Wait for a vLLM health endpoint, with early exit if the container dies.
+
+    If *container_name* is given the function checks ``docker inspect`` every
+    iteration and fails immediately when the container is no longer running,
+    printing the last 120 lines of container logs so the operator can see why
+    startup failed (OOM, missing deps, model-load error, etc.).
+    """
     url = f"http://{host}:{port}/health"
     deadline = time.time() + timeout
-    print(f">>> Waiting for vLLM at {url} (up to {timeout}s)…")
+    label = f" ({container_name})" if container_name else ""
+    print(f">>> Waiting for vLLM at {url}{label} (up to {timeout}s)…")
     while time.time() < deadline:
+        # ---- fail-fast: container crashed? -----------------------------------
+        if container_name:
+            alive = _container_is_running(container_name)
+            if alive is False:
+                print(
+                    f"\n  *** Container '{container_name}' is no longer running!",
+                    file=sys.stderr, flush=True,
+                )
+                print(f"  --- {container_name} logs (last 120 lines) ---", flush=True)
+                run(["docker", "logs", "--tail", "120", container_name], check=False)
+                raise RuntimeError(
+                    f"Container '{container_name}' exited before becoming healthy. "
+                    f"Check the logs above for the root cause (OOM, model-load error, missing deps, etc.)."
+                )
+        # ---- health probe ----------------------------------------------------
         try:
             urllib.request.urlopen(url, timeout=3)
             print(">>> vLLM is ready!\n")
@@ -234,7 +280,7 @@ def serve_model(model: dict, enable_prefix_caching: bool = True):
     write_env(model, enable_prefix_caching=enable_prefix_caching, hf_token=hf_token)
     compose_down_all()
     compose_up(["up", "-d", "vllm-large"])
-    wait_for_vllm(timeout=1800)  # large models can take 15-30 min to load on first run
+    wait_for_vllm(timeout=1800, container_name="vllm-large")  # large models can take 15-30 min to load on first run
 
 
 def run_bench(bench_key: str, sweep_ts: str | None = None, model_tag: str | None = None) -> int:
@@ -400,9 +446,9 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
             print(">>> Starting vllm-large first (sequential to avoid memory race)…", flush=True)
             compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large"])
             try:
-                wait_for_vllm(port=8000, timeout=1800)
-            except TimeoutError as e:
-                print(f"  *** TIMEOUT (vllm-large): {e}", file=sys.stderr)
+                wait_for_vllm(port=8000, timeout=1800, container_name="vllm-large")
+            except (TimeoutError, RuntimeError) as e:
+                print(f"  *** FAILED (vllm-large): {e}", file=sys.stderr)
                 run(["docker", "logs", "--tail", "80", "vllm-large"], check=False)
                 failed.append(f"{lg_label}+{stt_label}")
                 compose_down_all(check=False)
@@ -411,9 +457,9 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
             print(">>> vllm-large healthy — now starting vllm-small (STT)…", flush=True)
             compose_up(["--profile", "co-deploy", "up", "-d", "vllm-small"])
             try:
-                wait_for_vllm(port=8001, timeout=1800)
-            except TimeoutError as e:
-                print(f"  *** TIMEOUT (vllm-small/STT): {e}", file=sys.stderr)
+                wait_for_vllm(port=8001, timeout=1800, container_name="vllm-small")
+            except (TimeoutError, RuntimeError) as e:
+                print(f"  *** FAILED (vllm-small/STT): {e}", file=sys.stderr)
                 run(["docker", "logs", "--tail", "80", "vllm-small"], check=False)
                 failed.append(f"{lg_label}+{stt_label}")
                 compose_down_all(check=False)
@@ -499,9 +545,9 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
             print(">>> Starting vllm-large first (sequential to avoid memory race)…", flush=True)
             compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large"])
             try:
-                wait_for_vllm(port=8000, timeout=1800)
-            except TimeoutError as e:
-                print(f"  *** TIMEOUT (vllm-large): {e}", file=sys.stderr)
+                wait_for_vllm(port=8000, timeout=1800, container_name="vllm-large")
+            except (TimeoutError, RuntimeError) as e:
+                print(f"  *** FAILED (vllm-large): {e}", file=sys.stderr)
                 print("  --- vllm-large logs (last 80 lines) ---", flush=True)
                 run(["docker", "logs", "--tail", "80", "vllm-large"], check=False)
                 failed.append(f"{lg_label}+{sm_label}")
@@ -511,9 +557,9 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
             print(">>> vllm-large healthy — now starting vllm-small…", flush=True)
             compose_up(["--profile", "co-deploy", "up", "-d", "vllm-small"])
             try:
-                wait_for_vllm(port=8001, timeout=1800)
-            except TimeoutError as e:
-                print(f"  *** TIMEOUT (vllm-small): {e}", file=sys.stderr)
+                wait_for_vllm(port=8001, timeout=1800, container_name="vllm-small")
+            except (TimeoutError, RuntimeError) as e:
+                print(f"  *** FAILED (vllm-small): {e}", file=sys.stderr)
                 print("  --- vllm-small logs (last 80 lines) ---", flush=True)
                 run(["docker", "logs", "--tail", "80", "vllm-small"], check=False)
                 failed.append(f"{lg_label}+{sm_label}")
