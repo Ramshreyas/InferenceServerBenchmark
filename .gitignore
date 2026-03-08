@@ -4,6 +4,10 @@ results/
 *.csv
 *.log
 
+# Generated files (sweep.py)
+patches/
+docker-compose.override.yml
+
 # Environment and Secrets
 .env
 .env.local

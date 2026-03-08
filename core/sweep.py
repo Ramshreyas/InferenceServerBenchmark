@@ -71,7 +71,11 @@ def _model_flag(key: str, value, prefix: str = "") -> str:
 def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | None = None):
     quant = model.get("quantization", "none")
     quant_flag = f"--quantization {quant}" if quant != "none" else ""
-    prefix_flag = "--enable-prefix-caching" if enable_prefix_caching else ""
+
+    # Model-level override for prefix caching (e.g., FP8 KV cache disables it)
+    model_epc = model.get("enable_prefix_caching")
+    epc = model_epc if model_epc is not None else enable_prefix_caching
+    prefix_flag = "--enable-prefix-caching" if epc else "--no-enable-prefix-caching"
 
     max_len = model.get("max_model_len", 0)
     if max_len and str(max_len) != "auto":
@@ -129,6 +133,10 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
     lg_image = large.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
     sm_image = small.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
 
+    # Per-model prefix caching (large always enabled unless model overrides)
+    lg_epc = large.get("enable_prefix_caching", True)
+    lg_prefix = "--enable-prefix-caching" if lg_epc else "--no-enable-prefix-caching"
+
     lines = [
         # ── Large model (vllm-large, port 8000) ──
         f"VLLM_IMAGE={lg_image}",
@@ -137,7 +145,7 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
         f"GPU_MEMORY_UTIL={lg_util}",
         f"MAX_MODEL_LEN_FLAG={f'--max-model-len {lg_max}' if lg_max and str(lg_max) != 'auto' else ''}",
         f"QUANTIZATION_FLAG={f'--quantization {lg_quant}' if lg_quant != 'none' else ''}",
-        f"ENABLE_PREFIX_CACHING_FLAG=--enable-prefix-caching",
+        f"ENABLE_PREFIX_CACHING_FLAG={lg_prefix}",
         f"EXTRA_VLLM_FLAGS={lg_extra}",
         # ── Small model (vllm-small, port 8001) ──
         f"SMALL_VLLM_IMAGE={sm_image}",
@@ -158,6 +166,103 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
     for line in lines:
         print(f"  {line}")
     print()
+
+
+# ---------------------------------------------------------------------------
+# SM120 (workstation Blackwell) FP4 patches
+# ---------------------------------------------------------------------------
+COMPOSE_OVERRIDE = "docker-compose.override.yml"
+PATCH_DIR = Path("patches")
+
+
+def prepare_sm120_patches(model: dict) -> bool:
+    """Run the SM120 FP4 patch script if the model requires it.
+
+    Extracts and patches mxfp4.py + compilation_context.py from the Docker
+    image so they can be bind-mounted into the container.
+    Returns True if patches were generated, False otherwise.
+    """
+    if not model.get("sm120_fp4_patches"):
+        return False
+
+    image = model.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
+    print(f">>> Preparing SM120 FP4 patches from {image}…")
+    result = run(
+        ["bash", "scripts/patch-sm120-fp4.sh", image, str(PATCH_DIR)],
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"SM120 FP4 patch script failed (exit {result.returncode}). "
+            f"Check scripts/patch-sm120-fp4.sh output above."
+        )
+    return True
+
+
+def write_compose_override(model: dict, small_model: dict | None = None):
+    """Write or remove docker-compose.override.yml for SM120 patches + extra env vars.
+
+    Docker Compose automatically merges docker-compose.override.yml on top of
+    docker-compose.yml, adding extra environment variables and bind-mounting
+    the patched Python files into the container.
+
+    If neither model needs patches or extra env vars, the override file is
+    removed so it doesn't affect other models.
+    """
+    override_path = Path(COMPOSE_OVERRIDE)
+    services: dict = {}
+
+    for svc_name, m in [("vllm-large", model), ("vllm-small", small_model)]:
+        if m is None:
+            continue
+
+        extra_env = m.get("vllm_extra_env", {})
+        needs_patches = m.get("sm120_fp4_patches", False)
+
+        if not extra_env and not needs_patches:
+            continue
+
+        svc: dict = {}
+
+        if extra_env:
+            svc["environment"] = [f"{k}={v}" for k, v in extra_env.items()]
+
+        if needs_patches:
+            svc.setdefault("volumes", [])
+            svc["volumes"].extend([
+                f"./{PATCH_DIR}/mxfp4.py:"
+                "/usr/local/lib/python3.12/dist-packages/vllm/"
+                "model_executor/layers/quantization/mxfp4.py:ro",
+                f"./{PATCH_DIR}/compilation_context.py:"
+                "/usr/local/lib/python3.12/dist-packages/flashinfer/"
+                "compilation_context.py:ro",
+            ])
+
+        services[svc_name] = svc
+
+    if not services:
+        # No overrides needed — remove stale file
+        if override_path.exists():
+            override_path.unlink()
+            print(f">>> Removed {COMPOSE_OVERRIDE} (not needed for this model)")
+        return
+
+    override = {"services": services}
+    with open(override_path, "w") as f:
+        f.write("# Auto-generated by sweep.py — DO NOT EDIT\n")
+        f.write("# SM120 FP4 patches and extra environment variables\n")
+        yaml.dump(override, f, default_flow_style=False, sort_keys=False)
+    print(f"=== {COMPOSE_OVERRIDE} written ===")
+    with open(override_path) as f:
+        print(f.read())
+
+
+def prepare_model_overrides(model: dict, small_model: dict | None = None):
+    """Prepare SM120 FP4 patches and compose override for the given model(s)."""
+    for m in [model, small_model]:
+        if m is not None:
+            prepare_sm120_patches(m)
+    write_compose_override(model=model, small_model=small_model)
 
 
 def probe_max_model_len(host: str = "localhost", port: int = 8000) -> int | None:
@@ -389,6 +494,7 @@ def serve_model(model: dict, enable_prefix_caching: bool = True):
         return
 
     write_env(model, enable_prefix_caching=enable_prefix_caching, hf_token=hf_token)
+    prepare_model_overrides(model)
     compose_down_all()
     compose_up(["up", "-d", "vllm-large"])
     wait_for_vllm(timeout=1800, container_name="vllm-large")  # large models can take 15-30 min to load on first run
@@ -552,6 +658,7 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
         if running_lg == lg["name"] and running_stt == stt["name"]:
             print(f">>> {lg_label} + {stt_label} already running — reusing containers", flush=True)
         else:
+            prepare_model_overrides(lg, stt)
             compose_down_all()
 
             print(">>> Starting vllm-large first (sequential to avoid memory race)…", flush=True)
@@ -651,6 +758,7 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
         if running_lg == lg["name"] and running_sm == sm["name"]:
             print(f">>> {lg_label} + {sm_label} already running — reusing containers", flush=True)
         else:
+            prepare_model_overrides(lg, sm)
             compose_down_all()
 
             # Start models SEQUENTIALLY to avoid GPU memory allocation race.
