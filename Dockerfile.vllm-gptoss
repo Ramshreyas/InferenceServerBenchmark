@@ -6,16 +6,16 @@
 # which wastes ~6 GB VRAM and loses the throughput benefit of native FP4
 # tensor-core ops.
 #
-# Strategy: start from the stock vLLM nightly (which already has torch, CUDA,
-# and all runtime deps), then swap in the gpt-oss vLLM wheel on top.
-# We use --no-deps so it doesn't try to resolve the pinned torch nightly
-# that has been rotated out of PyTorch's rolling index.
+# Strategy: start from the stock vLLM stable release (CUDA 12.x, which shares
+# libcudart.so.12 with the cu128-compiled gpt-oss wheel), then swap in the
+# gpt-oss vLLM wheel on top.  We use --no-deps so it doesn't try to resolve
+# the pinned torch nightly that has been rotated out of PyTorch's rolling index.
 #
 # Build:
 #   docker build -f Dockerfile.vllm-gptoss -t vllm-gptoss:latest .
 # =============================================================================
 
-FROM vllm/vllm-openai:cu130-nightly
+FROM vllm/vllm-openai:latest
 
 # Install the gpt-oss vLLM wheel over the stock vllm, skipping dependency
 # resolution (torch + cuda already satisfied by the base image).
