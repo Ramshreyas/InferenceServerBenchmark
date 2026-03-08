@@ -220,6 +220,20 @@ def _container_is_running(container_name: str) -> bool | None:
         return None
 
 
+def _get_container_restart_count(container_name: str) -> int | None:
+    """Return the container's RestartCount, or None if inspect failed."""
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.RestartCount}}", container_name],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        return int(result.stdout.strip())
+    except Exception:
+        return None
+
+
 def _dump_container_logs(
     container_name: str,
     context: str = "",
@@ -267,6 +281,12 @@ def _dump_container_logs(
     return str(log_path)
 
 
+# Maximum number of container restarts before declaring a crash-loop and
+# failing immediately — prevents silently hanging for the full timeout when
+# Docker's ``restart: unless-stopped`` keeps reviving a broken container.
+CRASH_LOOP_RESTART_THRESHOLD = 2
+
+
 def wait_for_vllm(
     host: str = "localhost",
     port: int = 8000,
@@ -276,16 +296,19 @@ def wait_for_vllm(
     """Wait for a vLLM health endpoint, with early exit if the container dies.
 
     If *container_name* is given the function checks ``docker inspect`` every
-    iteration and fails immediately when the container is no longer running,
-    printing the last 120 lines of container logs so the operator can see why
-    startup failed (OOM, missing deps, model-load error, etc.).
+    iteration and fails immediately when the container is no longer running
+    **or** has entered a crash-loop (RestartCount ≥ threshold), printing
+    container logs so the operator can see why startup failed.
     """
     url = f"http://{host}:{port}/health"
     deadline = time.time() + timeout
     label = f" ({container_name})" if container_name else ""
     print(f">>> Waiting for vLLM at {url}{label} (up to {timeout}s)…")
+
+    initial_restarts: int | None = None  # set on first successful inspect
+
     while time.time() < deadline:
-        # ---- fail-fast: container crashed? -----------------------------------
+        # ---- fail-fast: container crashed or crash-looping? ------------------
         if container_name:
             alive = _container_is_running(container_name)
             if alive is False:
@@ -303,6 +326,33 @@ def wait_for_vllm(
                     f"Full logs saved to {log_path or '(capture failed)'}. "
                     f"Check for OOM, model-load error, CUDA graph crash, or missing deps."
                 )
+
+            # Detect crash-loop: Docker restarts the container via
+            # 'restart: unless-stopped' so it stays "running" even though
+            # vLLM keeps crashing on startup.
+            restarts = _get_container_restart_count(container_name)
+            if restarts is not None:
+                if initial_restarts is None:
+                    initial_restarts = restarts
+                delta = restarts - initial_restarts
+                if delta >= CRASH_LOOP_RESTART_THRESHOLD:
+                    print(
+                        f"\n  *** Container '{container_name}' has restarted "
+                        f"{delta} time(s) — crash loop detected!",
+                        file=sys.stderr, flush=True,
+                    )
+                    log_path = _dump_container_logs(
+                        container_name,
+                        context="crash-loop",
+                        tail_lines=200,
+                    )
+                    raise RuntimeError(
+                        f"Container '{container_name}' is crash-looping "
+                        f"(restarted {delta}× since launch). "
+                        f"Full logs saved to {log_path or '(capture failed)'}. "
+                        f"Check for import errors, CUDA/torch ABI mismatch, or missing deps."
+                    )
+
         # ---- health probe ----------------------------------------------------
         try:
             urllib.request.urlopen(url, timeout=3)
