@@ -36,16 +36,6 @@
 #                   Default: vllm/vllm-openai:cu130-nightly (stock nightly).
 #                   Models requiring custom wheels (e.g. gpt-oss MXFP4)
 #                   should point to a purpose-built image.
-#   enable_prefix_caching  (optional) Explicitly enable/disable prefix caching.
-#                   Default: follows the benchmark runner (True for text, False
-#                   for STT). Set to false for models using FP8 KV cache.
-#   sm120_fp4_patches (optional) If true, sweep.py runs scripts/patch-sm120-fp4.sh
-#                   to extract and patch mxfp4.py + compilation_context.py from
-#                   the Docker image, then bind-mounts them into the container.
-#                   Required for native FP4 on SM120 (RTX Blackwell) GPUs.
-#   vllm_extra_env    (optional) Dict of extra environment variables passed to
-#                   the vLLM container (written into docker-compose.override.yml).
-#                   Example: {VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8_CUTLASS: "1"}
 #
 # Co-deploy pairs: sweep.py auto-computes memory splits proportional to
 #   loaded_gb, within a total budget of 0.92.  Pairs that cannot fit are
@@ -94,17 +84,8 @@ models:
     gpu_memory_util: 0.95
     tensor_parallel: 1
     topology: sparse_moe        # 117B total, 5.1B active per token (MoE, not dense)
-    loaded_gb: 60               # ~60 GB with native MXFP4
-    enable_prefix_caching: false # Blackwell recipe — incompatible with FP8 KV cache
-    sm120_fp4_patches: true     # Patch vLLM/FlashInfer to recognize SM120 as FP4-capable
-    vllm_extra_env:             # Extra env vars passed to the vLLM container
-      VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8_CUTLASS: "1"  # CUTLASS FP4 MoE (TRT-LLM has hard SM100 assert)
-    vllm_extra_flags: "--kv-cache-dtype fp8 --max-cudagraph-capture-size 2048 --max-num-batched-tokens 8192 --stream-interval 20"
-    # NOTE: SM120 (RTX PRO 6000 Blackwell) shares FP4 tensor-core ISA with SM100
-    # (B100/B200) but vLLM/FlashInfer don't recognize it yet. The sm120_fp4_patches
-    # flag triggers scripts/patch-sm120-fp4.sh which mounts patched mxfp4.py and
-    # compilation_context.py into the container. Uses CUTLASS backend because
-    # TRT-LLM kernels have a hard arch==10 assertion that blocks SM120.
+    loaded_gb: 60               # ~60 GB with native MXFP4 (was 66 GB under Marlin FP4→FP16 fallback)
+    vllm_image: vllm-gptoss:latest   # Requires custom image built from Dockerfile.vllm-gptoss (native MXFP4 kernels)
 
   - name: Qwen/Qwen3-Coder-Next-FP8
     label: qwen3-coder-next-fp8
