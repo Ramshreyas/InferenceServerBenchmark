@@ -1,0 +1,56 @@
+# =============================================================================
+# Dockerfile.vllm-gptoss — vLLM image with native MXFP4 support for gpt-oss
+# =============================================================================
+# The stock vllm/vllm-openai nightly does NOT include the gpt-oss-specific
+# MXFP4 kernels.  Without them, vLLM falls back to Marlin FP4→FP16 dequant
+# which wastes ~6 GB VRAM and loses the throughput benefit of native FP4
+# tensor-core ops.
+#
+# This image installs the official gpt-oss vLLM wheel from OpenAI.
+#
+# Build:
+#   docker build -f Dockerfile.vllm-gptoss -t vllm-gptoss:latest .
+# =============================================================================
+
+FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-venv python3.12-dev \
+        curl git build-essential \
+        libsndfile1 libsox-fmt-all \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.12 the default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+
+# Install uv (fast Python package manager recommended by vLLM / OpenAI)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Create venv and install the gpt-oss vLLM wheel
+RUN uv venv /opt/vllm-env --python 3.12 --seed
+ENV VIRTUAL_ENV=/opt/vllm-env
+ENV PATH="/opt/vllm-env/bin:$PATH"
+
+RUN uv pip install --pre vllm==0.10.1+gptoss \
+        --extra-index-url https://wheels.vllm.ai/gpt-oss/ \
+        --extra-index-url https://download.pytorch.org/whl/nightly/cu128 \
+        --index-strategy unsafe-best-match
+
+# Audio processing libs (shared with stock entrypoint)
+RUN uv pip install soxr librosa soundfile 'mistral-common[audio]'
+
+# Upgrade transformers (consistency with entrypoint.sh)
+RUN uv pip install --upgrade transformers
+
+# Copy the entrypoint wrapper (same as stock, delegates to `vllm serve`)
+COPY scripts/vllm-entrypoint.sh /usr/local/bin/vllm-entrypoint.sh
+RUN chmod +x /usr/local/bin/vllm-entrypoint.sh
+
+EXPOSE 8000
+
+ENTRYPOINT ["/usr/local/bin/vllm-entrypoint.sh"]

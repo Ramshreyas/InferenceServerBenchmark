@@ -32,6 +32,10 @@
 #   vllm_extra_flags  (optional) Additional vLLM CLI flags passed verbatim.
 #                   Example: "--language-model-only" to skip vision encoders
 #                   on multimodal models for text-only benchmarks.
+#   vllm_image        (optional) Docker image for this model's vLLM server.
+#                   Default: vllm/vllm-openai:cu130-nightly (stock nightly).
+#                   Models requiring custom wheels (e.g. gpt-oss MXFP4)
+#                   should point to a purpose-built image.
 #
 # Co-deploy pairs: sweep.py auto-computes memory splits proportional to
 #   loaded_gb, within a total budget of 0.92.  Pairs that cannot fit are
@@ -76,11 +80,12 @@ models:
     label: gpt-oss-120b
     role: large
     modality: text
-    quantization: none          # Pre-quantized mxfp4 (Blackwell-native 4-bit)
+    quantization: none          # Pre-quantized MXFP4 — vLLM auto-detects from checkpoint; do NOT pass --quantization
     gpu_memory_util: 0.95
     tensor_parallel: 1
-    topology: dense
-    loaded_gb: 60
+    topology: sparse_moe        # 117B total, 5.1B active per token (MoE, not dense)
+    loaded_gb: 60               # ~60 GB with native MXFP4 (was 66 GB under Marlin FP4→FP16 fallback)
+    vllm_image: vllm-gptoss:latest   # Requires custom image built from Dockerfile.vllm-gptoss (native MXFP4 kernels)
 
   - name: Qwen/Qwen3-Coder-Next-FP8
     label: qwen3-coder-next-fp8

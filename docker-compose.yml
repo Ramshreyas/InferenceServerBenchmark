@@ -12,7 +12,7 @@
 services:
   # ── Primary vLLM server (large / single model) ────────────────────────────
   vllm-large:
-    image: vllm/vllm-openai:cu130-nightly
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:cu130-nightly}
     container_name: vllm-large
     runtime: nvidia
     restart: unless-stopped
@@ -59,7 +59,7 @@ services:
 
   # ── Secondary vLLM server (small model, co-deploy only) ───────────────────
   vllm-small:
-    image: vllm/vllm-openai:cu130-nightly
+    image: ${SMALL_VLLM_IMAGE:-vllm/vllm-openai:cu130-nightly}
     container_name: vllm-small
     runtime: nvidia
     environment:

@@ -80,8 +80,10 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
         max_len_flag = ""
 
     extra_flags = model.get("vllm_extra_flags", "")
+    vllm_image = model.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
 
     lines = [
+        f"VLLM_IMAGE={vllm_image}",
         f"MODEL_NAME={model['name']}",
         f"TENSOR_PARALLEL={model.get('tensor_parallel', 1)}",
         f"GPU_MEMORY_UTIL={model.get('gpu_memory_util', 0.92)}",
@@ -90,6 +92,7 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
         f"ENABLE_PREFIX_CACHING_FLAG={prefix_flag}",
         f"EXTRA_VLLM_FLAGS={extra_flags}",
         # Placeholders so docker compose doesn't warn about unset vars
+        "SMALL_VLLM_IMAGE=vllm/vllm-openai:cu130-nightly",
         "SMALL_MODEL_NAME=",
         "SMALL_TENSOR_PARALLEL=1",
         "SMALL_GPU_MEMORY_UTIL=0.50",
@@ -123,9 +126,12 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
 
     lg_extra = large.get("vllm_extra_flags", "")
     sm_extra = small.get("vllm_extra_flags", "")
+    lg_image = large.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
+    sm_image = small.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
 
     lines = [
         # ── Large model (vllm-large, port 8000) ──
+        f"VLLM_IMAGE={lg_image}",
         f"MODEL_NAME={large['name']}",
         f"TENSOR_PARALLEL={large.get('tensor_parallel', 1)}",
         f"GPU_MEMORY_UTIL={lg_util}",
@@ -134,6 +140,7 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
         f"ENABLE_PREFIX_CACHING_FLAG=--enable-prefix-caching",
         f"EXTRA_VLLM_FLAGS={lg_extra}",
         # ── Small model (vllm-small, port 8001) ──
+        f"SMALL_VLLM_IMAGE={sm_image}",
         f"SMALL_MODEL_NAME={small['name']}",
         f"SMALL_TENSOR_PARALLEL={small.get('tensor_parallel', 1)}",
         f"SMALL_GPU_MEMORY_UTIL={sm_util}",
