@@ -403,8 +403,8 @@ def context_window_check(model: dict, bench_key: str) -> bool:
 # ---------------------------------------------------------------------------
 
 GPU_VRAM_GB = 96.0
-CO_DEPLOY_TOTAL_BUDGET = 0.88   # leave 12% for CUDA context / driver / Triton scratch
-CO_DEPLOY_HEADROOM = 1.25       # 25% headroom over loaded_gb for KV cache / activations
+CO_DEPLOY_TOTAL_BUDGET = 0.90   # leave 10% for CUDA context / driver / Triton scratch
+CO_DEPLOY_HEADROOM = 1.20       # 20% headroom over loaded_gb for KV cache / activations
 
 def compute_co_deploy_memory(large: dict, small: dict) -> tuple[float | None, float | None]:
     """Return (large_util, small_util) proportional to loaded_gb, or (None, None) if pair cannot fit."""
