@@ -76,6 +76,28 @@ models:
     loaded_gb: 70               # ~5 GB more with vision encoder loaded
     vllm_extra_flags: "--enforce-eager --reasoning-parser qwen3"
 
+  - name: Qwen/Qwen3.5-122B-A10B-GPTQ-Int4
+    label: qwen35-122b-a10b-gptq-int4-text
+    role: large
+    modality: text
+    quantization: moe_wna16     # GPTQ-Int4 MoE — vLLM requires --quantization moe_wna16 (not gptq) for MoE WNA16 kernels
+    gpu_memory_util: 0.80
+    tensor_parallel: 1          # ~65 GB GPTQ-Int4 — fits single 96 GB GPU; 0.80 leaves ~19 GB for Triton autotuner scratch on DeltaNet FLA kernels
+    topology: sparse_moe        # 122B total (qwen3_5_moe), 10B active per token
+    loaded_gb: 65
+    vllm_extra_flags: "--language-model-only --enforce-eager --reasoning-parser qwen3"   # enforce-eager: CUDA graphs crash on hybrid DeltaNet+MoE
+
+  - name: Qwen/Qwen3.5-122B-A10B-GPTQ-Int4
+    label: qwen35-122b-a10b-gptq-int4-vlm
+    role: large
+    modality: vlm
+    quantization: moe_wna16
+    gpu_memory_util: 0.85
+    tensor_parallel: 1
+    topology: sparse_moe
+    loaded_gb: 70               # ~5 GB more with vision encoder loaded
+    vllm_extra_flags: "--enforce-eager --reasoning-parser qwen3"
+
   - name: openai/gpt-oss-120b
     label: gpt-oss-120b
     role: large
