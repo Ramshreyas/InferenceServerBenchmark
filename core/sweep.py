@@ -126,6 +126,14 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
 
     lg_extra = large.get("vllm_extra_flags", "")
     sm_extra = small.get("vllm_extra_flags", "")
+
+    # Auto-cap max_model_len for co-deploy: models with huge default context
+    # windows (e.g. 262K) will OOM on KV/Mamba-state cache when gpu_memory_util
+    # is reduced for shared-GPU deployment.  Inject a safe cap so vLLM starts.
+    if not lg_max and "--max-model-len" not in lg_extra:
+        lg_max = CO_DEPLOY_DEFAULT_MAX_MODEL_LEN
+    if not sm_max and "--max-model-len" not in sm_extra:
+        sm_max = CO_DEPLOY_DEFAULT_MAX_MODEL_LEN
     lg_image = large.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
     sm_image = small.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
 
@@ -472,6 +480,7 @@ def context_window_check(model: dict, bench_key: str) -> bool:
 GPU_VRAM_GB = 96.0
 CO_DEPLOY_TOTAL_BUDGET = 0.90   # leave 10% for CUDA context / driver / Triton scratch
 CO_DEPLOY_HEADROOM = 1.20       # 20% headroom over loaded_gb for KV cache / activations
+CO_DEPLOY_DEFAULT_MAX_MODEL_LEN = 8192  # safe cap for models without explicit --max-model-len in co-deploy
 
 def compute_co_deploy_memory(large: dict, small: dict) -> tuple[float | None, float | None]:
     """Return (large_util, small_util) proportional to loaded_gb, or (None, None) if pair cannot fit."""
