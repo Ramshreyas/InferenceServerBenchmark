@@ -27,6 +27,7 @@ from tui.data import (
     load_sanity_summary,
     load_stt_summary,
     load_stt_streaming_summary,
+    load_mixed_co_deploy_summary,
     get_stt_concurrency_levels,
     get_concurrency_grid,
     get_models_in_decision,
@@ -387,6 +388,11 @@ class ResultsTab(Widget):
             self._show_stt(rs)
             return
 
+        # ── Mixed co-deploy: dedicated renderer ──────────────────────
+        if rs.bench_type == "mixed_co_deploy":
+            self._show_mixed_co_deploy(rs)
+            return
+
         # Load the appropriate CSV
         csv_path = rs.decision_csv or rs.summary_csv
         if csv_path is None:
@@ -551,6 +557,109 @@ class ResultsTab(Widget):
         self.query_one("#prompt-val", Static).update(f"{_short_model(str(model_name))}")
         self.query_one("#output-val", Static).update(f"levels: {levels}")
         self.query_one("#metric-val", Static).update(bench_label)
+        self.query_one("#grid-pos", Static).update(f"[{len(df)} rows]")
+        self.query_one("#scorecard", Static).update("")
+
+    # ── Mixed co-deploy view ─────────────────────────────────────────────
+
+    def _show_mixed_co_deploy(self, rs: ResultSet) -> None:
+        """Render mixed co-deploy benchmark results.
+
+        Shows:
+          Left chart:  Text model P95 TTFT (lower is better)
+          Right chart: STT model Mean WER (lower is better)
+          Below:       Full summary table with all metrics
+        """
+        path = rs.summary_csv
+        if path is None:
+            self.query_one("#chart-ttft", Static).update("No summary CSV found for this run.")
+            self.query_one("#chart-thru", Static).update("")
+            self.query_one("#minimap", Static).update("")
+            self.query_one("#scorecard", Static).update("")
+            for wid in ("prompt-val", "output-val", "metric-val", "grid-pos"):
+                self.query_one(f"#{wid}", Static).update("—")
+            return
+
+        df = load_mixed_co_deploy_summary(path)
+        if df.empty:
+            self.query_one("#chart-ttft", Static).update("Summary CSV is empty.")
+            self.query_one("#chart-thru", Static).update("")
+            self.query_one("#minimap", Static).update("")
+            self.query_one("#scorecard", Static).update("")
+            for wid in ("prompt-val", "output-val", "metric-val", "grid-pos"):
+                self.query_one(f"#{wid}", Static).update("—")
+            return
+
+        text_df = df[df["endpoint"] == "text"]
+        stt_df = df[df["endpoint"] == "stt"]
+
+        def _text_label(row) -> str:
+            p = row.get("prompt_tokens_target", "?")
+            o = row.get("output_tokens_target", "?")
+            return f"p={p} o={o}"
+
+        def _stt_label(row) -> str:
+            p = row.get("prompt_tokens_target", "?")
+            o = row.get("output_tokens_target", "?")
+            return f"p={p} o={o}"
+
+        # Left chart: Text P95 TTFT
+        if not text_df.empty and "P95_ttft_ms" in text_df.columns:
+            left_chart = _render_chart(
+                text_df, "P95_ttft_ms", "Text LLM — P95 TTFT (ms)",
+                higher_better=False, unit="ms", fmt=">8.0f",
+                name_fn=_text_label,
+            )
+        else:
+            left_chart = Text("No text endpoint data available.", style="dim")
+
+        # Right chart: STT Mean WER
+        if not stt_df.empty and "mean_wer" in stt_df.columns:
+            right_chart = _render_chart(
+                stt_df, "mean_wer", "STT — Mean WER",
+                higher_better=False, unit="", fmt=">8.4f",
+                name_fn=_stt_label,
+            )
+        elif not stt_df.empty and "mean_rtf" in stt_df.columns:
+            right_chart = _render_chart(
+                stt_df, "mean_rtf", "STT — Mean RTF",
+                higher_better=False, unit="", fmt=">8.4f",
+                name_fn=_stt_label,
+            )
+        else:
+            right_chart = Text("No STT endpoint data available.", style="dim")
+
+        self.query_one("#chart-ttft", Static).update(left_chart)
+        self.query_one("#chart-thru", Static).update(right_chart)
+
+        # Full summary table
+        table = RichTable(
+            title=f"Mixed Co-Deploy Summary — {rs.model_tag or rs.label}",
+            box=None,
+        )
+        for col in df.columns:
+            table.add_column(col, justify="right" if df[col].dtype != object else "left")
+        for _, row in df.iterrows():
+            cells = []
+            for col in df.columns:
+                val = row[col]
+                if isinstance(val, float):
+                    if "wer" in col or "rtf" in col:
+                        cells.append(f"{val:.4f}")
+                    else:
+                        cells.append(f"{val:.2f}")
+                else:
+                    cells.append(str(val))
+            table.add_row(*cells)
+
+        self.query_one("#minimap", Static).update(table)
+
+        # Controls
+        text_model = df["text_model"].iloc[0] if "text_model" in df.columns else "?"
+        stt_model = df["stt_model"].iloc[0] if "stt_model" in df.columns else "?"
+        self.query_one("#prompt-val", Static).update(_short_model(str(text_model)))
+        self.query_one("#output-val", Static).update(_short_model(str(stt_model)))
+        self.query_one("#metric-val", Static).update("Mixed Co-Deploy")
         self.query_one("#grid-pos", Static).update(f"[{len(df)} rows]")
         self.query_one("#scorecard", Static).update("")
 

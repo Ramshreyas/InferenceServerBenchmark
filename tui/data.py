@@ -391,3 +391,17 @@ def load_stt_streaming_summary(path: str) -> pd.DataFrame:
              P50_latency_ms, P95_latency_ms, P99_latency_ms
     """
     return pd.read_csv(path)
+
+
+# ---------------------------------------------------------------------------
+# Mixed co-deploy data
+# ---------------------------------------------------------------------------
+
+def load_mixed_co_deploy_summary(path: str) -> pd.DataFrame:
+    """Load a mixed co-deploy summary CSV.
+
+    Columns: text_model, stt_model, prompt_tokens_target, output_tokens_target,
+             endpoint ('text' | 'stt'), n_requests,
+             plus per-endpoint metrics (TTFT/throughput for text, WER/RTF for stt).
+    """
+    return pd.read_csv(path)
