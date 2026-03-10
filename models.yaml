@@ -106,8 +106,8 @@ models:
     gpu_memory_util: 0.95
     tensor_parallel: 1
     topology: sparse_moe        # 117B total, 5.1B active per token (MoE, not dense)
-    loaded_gb: 60               # ~60 GB with native MXFP4 (was 66 GB under Marlin FP4→FP16 fallback)
-    vllm_image: vllm-gptoss:latest   # Requires custom image built from Dockerfile.vllm-gptoss (native MXFP4 kernels)
+    loaded_gb: 60               # ~60 GB with native MXFP4
+    vllm_extra_flags: "--no-enable-prefix-caching --kv-cache-dtype fp8 --max-cudagraph-capture-size 2048 --max-num-batched-tokens 8192 --stream-interval 20"   # Official Blackwell recipe (docs.vllm.ai/projects/recipes/en/latest/OpenAI/GPT-OSS.html)
 
   - name: Qwen/Qwen3-Coder-Next-FP8
     label: qwen3-coder-next-fp8

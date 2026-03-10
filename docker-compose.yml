@@ -22,6 +22,7 @@ services:
       - LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64
       - HF_TOKEN=${HF_TOKEN:-}
       - VLLM_DISABLE_COMPILE_CACHE=1
+      - VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8=1   # Blackwell: native FlashInfer MXFP4+MXFP8 MoE kernels for gpt-oss
     ports:
       - "8000:8000"
     volumes:
