@@ -239,5 +239,5 @@ models:
     gpu_memory_util: 0.85
     tensor_parallel: 1
     topology: dense
-    loaded_gb: 6
+    loaded_gb: 10               # 8.72 GiB weights + encoder cache + CUDA graph overhead
     vllm_extra_flags: "--tokenizer_mode mistral --config_format mistral --load_format mistral"
