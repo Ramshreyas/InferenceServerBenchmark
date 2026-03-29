@@ -44,13 +44,13 @@ class MixedCoDeployRunner:
         self.sweep_ts = sweep_ts
         self.model_tag = model_tag
 
-        # ── Text endpoint (large model, port 8000) ──────────────────────────
-        text_url = os.getenv("VLLM_ENDPOINT_LARGE", "http://vllm-large:8000/v1")
+        # ── Text endpoint (port 8000 by default) ───────────────────────────
+        text_url = os.getenv("VLLM_ENDPOINT_LARGE", "http://vllm-8000:8000/v1")
         self.client_text = OpenAI(base_url=text_url, api_key="dummy")
         self.text_model = os.getenv("LARGE_MODEL_NAME") or self._detect_text(self.client_text)
 
-        # ── STT endpoint (small model, port 8001) ───────────────────────────
-        self.stt_url = os.getenv("VLLM_ENDPOINT_SMALL", "http://vllm-small:8001/v1")
+        # ── STT endpoint (port 8001 by default) ────────────────────────────
+        self.stt_url = os.getenv("VLLM_ENDPOINT_SMALL", "http://vllm-8001:8001/v1")
         self.stt_model = os.getenv("SMALL_MODEL_NAME") or self._detect_stt()
 
         self.telemetry = (
@@ -109,7 +109,7 @@ class MixedCoDeployRunner:
         raise TimeoutError("STT server did not become ready in time")
 
     def _get_text_max_model_len(self) -> int:
-        base = os.getenv("VLLM_ENDPOINT_LARGE", "http://vllm-large:8000/v1")
+        base = os.getenv("VLLM_ENDPOINT_LARGE", "http://vllm-8000:8000/v1")
         base = base.rstrip("/").removesuffix("/v1")
         try:
             with _req.urlopen(f"{base}/v1/models", timeout=10) as resp:

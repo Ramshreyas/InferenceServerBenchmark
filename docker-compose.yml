@@ -2,18 +2,18 @@
 # docker-compose.yml — Blackwell Inference Testbench
 # =============================================================================
 # Services:
-#   vllm-large   Primary inference server (port 8000)  — always used
-#   vllm-small   Secondary inference server (port 8001) — co-deploy profile only
+#   vllm-8000    Inference server on port 8000 — always used
+#   vllm-8001    Inference server on port 8001 — co-deploy / co-serve only
 #   bench-runner  Benchmark runner for single-model benchmarks
 #   co-runner     Benchmark runner for co-deploy (Goal 2)
 #   nvitop        One-shot GPU snapshot (monitoring profile)
 # =============================================================================
 
 services:
-  # ── Primary vLLM server (large / single model) ────────────────────────────
-  vllm-large:
+  # ── vLLM server on port 8000 (primary / single model) ─────────────────────
+  vllm-8000:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:cu130-nightly}
-    container_name: vllm-large
+    container_name: vllm-8000
     runtime: nvidia
     restart: unless-stopped
     environment:
@@ -57,10 +57,10 @@ services:
     networks:
       - inference-net
 
-  # ── Secondary vLLM server (small model, co-deploy only) ───────────────────
-  vllm-small:
+  # ── vLLM server on port 8001 (co-deploy / co-serve only) ──────────────────
+  vllm-8001:
     image: ${SMALL_VLLM_IMAGE:-vllm/vllm-openai:cu130-nightly}
-    container_name: vllm-small
+    container_name: vllm-8001
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -111,10 +111,10 @@ services:
       dockerfile: Dockerfile
     container_name: bench-runner
     depends_on:
-      vllm-large:
+      vllm-8000:
         condition: service_healthy
     environment:
-      - VLLM_ENDPOINT=http://vllm-large:8000/v1
+      - VLLM_ENDPOINT=http://vllm-8000:8000/v1
       - CONFIG_PATH=${CONFIG_PATH:-/configs/sanity_check.yaml}
     volumes:
       - ./configs:/configs:ro
@@ -133,8 +133,8 @@ services:
       dockerfile: Dockerfile
     container_name: co-runner
     environment:
-      - VLLM_ENDPOINT_LARGE=http://vllm-large:8000/v1
-      - VLLM_ENDPOINT_SMALL=http://vllm-small:8001/v1
+      - VLLM_ENDPOINT_LARGE=http://vllm-8000:8000/v1
+      - VLLM_ENDPOINT_SMALL=http://vllm-8001:8001/v1
       - LARGE_MODEL_NAME=${MODEL_NAME:-}
       - SMALL_MODEL_NAME=${SMALL_MODEL_NAME:-}
     volumes:
@@ -142,9 +142,9 @@ services:
       - ./core:/app/core:ro
       - ./results:/results
     depends_on:
-      vllm-large:
+      vllm-8000:
         condition: service_healthy
-      vllm-small:
+      vllm-8001:
         condition: service_healthy
     profiles:
       - co-deploy
@@ -158,10 +158,10 @@ services:
       dockerfile: Dockerfile
     container_name: stt-runner
     depends_on:
-      vllm-large:
+      vllm-8000:
         condition: service_healthy
     environment:
-      - VLLM_ENDPOINT=http://vllm-large:8000/v1
+      - VLLM_ENDPOINT=http://vllm-8000:8000/v1
       - CONFIG_PATH=${CONFIG_PATH:-/configs/stt_sanity.yaml}
     volumes:
       - ./configs:/configs:ro
@@ -181,10 +181,10 @@ services:
       dockerfile: Dockerfile
     container_name: stt-streaming-runner
     depends_on:
-      vllm-large:
+      vllm-8000:
         condition: service_healthy
     environment:
-      - VLLM_ENDPOINT=http://vllm-large:8000/v1
+      - VLLM_ENDPOINT=http://vllm-8000:8000/v1
       - CONFIG_PATH=${CONFIG_PATH:-/configs/stt_streaming_sanity.yaml}
     volumes:
       - ./configs:/configs:ro
@@ -204,8 +204,8 @@ services:
       dockerfile: Dockerfile
     container_name: mixed-runner
     environment:
-      - VLLM_ENDPOINT_LARGE=http://vllm-large:8000/v1
-      - VLLM_ENDPOINT_SMALL=http://vllm-small:8001/v1
+      - VLLM_ENDPOINT_LARGE=http://vllm-8000:8000/v1
+      - VLLM_ENDPOINT_SMALL=http://vllm-8001:8001/v1
       - LARGE_MODEL_NAME=${MODEL_NAME:-}
       - SMALL_MODEL_NAME=${SMALL_MODEL_NAME:-}
     volumes:
@@ -214,9 +214,9 @@ services:
       - ./assets:/assets:ro
       - ./results:/results
     depends_on:
-      vllm-large:
+      vllm-8000:
         condition: service_healthy
-      vllm-small:
+      vllm-8001:
         condition: service_healthy
     profiles:
       - co-deploy

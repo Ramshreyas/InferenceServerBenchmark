@@ -44,8 +44,8 @@ class CoDeployRunner:
         self.model_tag = model_tag
 
         # ── Endpoints ────────────────────────────────────────────────────────
-        large_url = os.getenv("VLLM_ENDPOINT_LARGE", "http://vllm-large:8000/v1")
-        small_url = os.getenv("VLLM_ENDPOINT_SMALL", "http://vllm-small:8001/v1")
+        large_url = os.getenv("VLLM_ENDPOINT_LARGE", "http://vllm-8000:8000/v1")
+        small_url = os.getenv("VLLM_ENDPOINT_SMALL", "http://vllm-8001:8001/v1")
 
         self.client_large = OpenAI(base_url=large_url, api_key="dummy")
         self.client_small = OpenAI(base_url=small_url, api_key="dummy")
@@ -201,8 +201,8 @@ class CoDeployRunner:
         self._wait_for_server(self.client_large, "large")
         self._wait_for_server(self.client_small, "small")
 
-        large_base = os.getenv("VLLM_ENDPOINT_LARGE", "http://vllm-large:8000/v1")
-        small_base = os.getenv("VLLM_ENDPOINT_SMALL", "http://vllm-small:8001/v1")
+        large_base = os.getenv("VLLM_ENDPOINT_LARGE", "http://vllm-8000:8000/v1")
+        small_base = os.getenv("VLLM_ENDPOINT_SMALL", "http://vllm-8001:8001/v1")
         large_max_len = self._get_max_model_len(large_base)
         small_max_len = self._get_max_model_len(small_base)
         min_max_len = min(large_max_len, small_max_len)

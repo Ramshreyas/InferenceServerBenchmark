@@ -138,7 +138,7 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
     sm_image = small.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
 
     lines = [
-        # ── Large model (vllm-large, port 8000) ──
+        # ── Port-8000 model (vllm-8000) ──
         f"VLLM_IMAGE={lg_image}",
         f"MODEL_NAME={large['name']}",
         f"TENSOR_PARALLEL={large.get('tensor_parallel', 1)}",
@@ -147,7 +147,7 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
         f"QUANTIZATION_FLAG={f'--quantization {lg_quant}' if lg_quant != 'none' else ''}",
         f"ENABLE_PREFIX_CACHING_FLAG=--enable-prefix-caching",
         f"EXTRA_VLLM_FLAGS={lg_extra}",
-        # ── Small model (vllm-small, port 8001) ──
+        # ── Port-8001 model (vllm-8001) ──
         f"SMALL_VLLM_IMAGE={sm_image}",
         f"SMALL_MODEL_NAME={small['name']}",
         f"SMALL_TENSOR_PARALLEL={small.get('tensor_parallel', 1)}",
@@ -398,8 +398,8 @@ def serve_model(model: dict, enable_prefix_caching: bool = True):
 
     write_env(model, enable_prefix_caching=enable_prefix_caching, hf_token=hf_token)
     compose_down_all()
-    compose_up(["up", "-d", "vllm-large"])
-    wait_for_vllm(timeout=1800, container_name="vllm-large")  # large models can take 15-30 min to load on first run
+    compose_up(["up", "-d", "vllm-8000"])
+    wait_for_vllm(timeout=1800, container_name="vllm-8000")  # large models can take 15-30 min to load on first run
 
 
 def run_bench(bench_key: str, sweep_ts: str | None = None, model_tag: str | None = None) -> int:
@@ -550,12 +550,12 @@ def co_serve(
     compose_down_all()
 
     print(">>> Starting port-8000 model first…", flush=True)
-    compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large"])
-    wait_for_vllm(port=8000, timeout=1800, container_name="vllm-large")
+    compose_up(["--profile", "co-deploy", "up", "-d", "vllm-8000"])
+    wait_for_vllm(port=8000, timeout=1800, container_name="vllm-8000")
 
     print(">>> Port-8000 healthy — starting port-8001 model…", flush=True)
-    compose_up(["--profile", "co-deploy", "up", "-d", "vllm-small"])
-    wait_for_vllm(port=8001, timeout=1800, container_name="vllm-small")
+    compose_up(["--profile", "co-deploy", "up", "-d", "vllm-8001"])
+    wait_for_vllm(port=8001, timeout=1800, container_name="vllm-8001")
 
     section("BOTH MODELS READY")
     print(f"  :8000  →  {model_a['name']}  (label={label_a})")
@@ -570,8 +570,8 @@ def co_serve(
 def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_stt: str | None = None, stt_primary: bool = False):
     """Run mixed co-deploy: text (large) + STT (small) simultaneously.
 
-    When stt_primary=True, the STT model is placed on port 8000 (vllm-large)
-    and the text model on port 8001 (vllm-small).
+    When stt_primary=True, the STT model is placed on port 8000 (vllm-8000)
+    and the text model on port 8001 (vllm-8001).
     """
     text_pool = [m for m in models if m.get("role") == "large" and m.get("modality", "text") == "text"]
     stt_pool = [m for m in models if m.get("modality") == "stt"]
@@ -616,17 +616,17 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
         section(f"MIXED CO-DEPLOY: {lg_label} ({lg_util:.0%}) + {stt_label} ({stt_util:.0%})  [{port_note}]")
 
         if stt_primary:
-            # STT on port 8000 (vllm-large), text on port 8001 (vllm-small)
+            # STT on port 8000 (vllm-8000), text on port 8001 (vllm-8001)
             write_env_dual(stt, lg, lg_util=stt_util, sm_util=lg_util, hf_token=hf_token)
             expected_8000, expected_8001 = stt["name"], lg["name"]
-            text_endpoint = "http://vllm-small:8001/v1"
-            stt_endpoint = "http://vllm-large:8000/v1"
+            text_endpoint = "http://vllm-8001:8001/v1"
+            stt_endpoint = "http://vllm-8000:8000/v1"
         else:
-            # Text on port 8000 (vllm-large), STT on port 8001 (vllm-small)
+            # Text on port 8000 (vllm-8000), STT on port 8001 (vllm-8001)
             write_env_dual(lg, stt, lg_util=lg_util, sm_util=stt_util, hf_token=hf_token)
             expected_8000, expected_8001 = lg["name"], stt["name"]
-            text_endpoint = "http://vllm-large:8000/v1"
-            stt_endpoint = "http://vllm-small:8001/v1"
+            text_endpoint = "http://vllm-8000:8000/v1"
+            stt_endpoint = "http://vllm-8001:8001/v1"
 
         running_8000 = _get_running_model(port=8000)
         running_8001 = _get_running_model(port=8001)
@@ -635,25 +635,25 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
         else:
             compose_down_all()
 
-            print(">>> Starting vllm-large first (sequential to avoid memory race)…", flush=True)
-            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large"])
+            print(">>> Starting vllm-8000 first (sequential to avoid memory race)…", flush=True)
+            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-8000"])
             try:
-                wait_for_vllm(port=8000, timeout=1800, container_name="vllm-large")
+                wait_for_vllm(port=8000, timeout=1800, container_name="vllm-8000")
             except (TimeoutError, RuntimeError) as e:
-                print(f"  *** FAILED (vllm-large): {e}", file=sys.stderr)
-                _dump_container_logs("vllm-large", context=f"mixed_{lg_label}")
+                print(f"  *** FAILED (vllm-8000): {e}", file=sys.stderr)
+                _dump_container_logs("vllm-8000", context=f"mixed_{lg_label}")
                 failed.append(f"{lg_label}+{stt_label}")
                 compose_down_all(check=False)
                 continue
 
-            print(">>> vllm-large healthy — now starting vllm-small (STT)…", flush=True)
-            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-small"])
+            print(">>> vllm-8000 healthy — now starting vllm-8001 (STT)…", flush=True)
+            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-8001"])
             try:
-                wait_for_vllm(port=8001, timeout=1800, container_name="vllm-small")
+                wait_for_vllm(port=8001, timeout=1800, container_name="vllm-8001")
             except (TimeoutError, RuntimeError) as e:
-                print(f"  *** FAILED (vllm-small/STT): {e}", file=sys.stderr)
-                _dump_container_logs("vllm-small", context=f"mixed_{stt_label}")
-                _dump_container_logs("vllm-large", context=f"mixed_{lg_label}_when-stt-failed")
+                print(f"  *** FAILED (vllm-8001/STT): {e}", file=sys.stderr)
+                _dump_container_logs("vllm-8001", context=f"mixed_{stt_label}")
+                _dump_container_logs("vllm-8000", context=f"mixed_{lg_label}_when-stt-failed")
                 failed.append(f"{lg_label}+{stt_label}")
                 compose_down_all(check=False)
                 continue
@@ -675,8 +675,8 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
             ])
         except Exception as e:
             print(f"  *** BENCH FAILED: {e}", file=sys.stderr)
-            _dump_container_logs("vllm-large", context=f"mixed-benchfail_{lg_label}")
-            _dump_container_logs("vllm-small", context=f"mixed-benchfail_{stt_label}")
+            _dump_container_logs("vllm-8000", context=f"mixed-benchfail_{lg_label}")
+            _dump_container_logs("vllm-8001", context=f"mixed-benchfail_{stt_label}")
             failed.append(f"{lg_label}+{stt_label}")
         finally:
             compose_down_all(check=False)
@@ -742,26 +742,26 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
             # Start models SEQUENTIALLY to avoid GPU memory allocation race.
             # If both vLLM instances call torch.cuda.mem_get_info() at the same
             # time, they both see all 96 GB free and both try to over-allocate.
-            print(">>> Starting vllm-large first (sequential to avoid memory race)…", flush=True)
-            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large"])
+            print(">>> Starting vllm-8000 first (sequential to avoid memory race)…", flush=True)
+            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-8000"])
             try:
-                wait_for_vllm(port=8000, timeout=1800, container_name="vllm-large")
+                wait_for_vllm(port=8000, timeout=1800, container_name="vllm-8000")
             except (TimeoutError, RuntimeError) as e:
-                print(f"  *** FAILED (vllm-large): {e}", file=sys.stderr)
-                _dump_container_logs("vllm-large", context=f"co-deploy_{lg_label}")
+                print(f"  *** FAILED (vllm-8000): {e}", file=sys.stderr)
+                _dump_container_logs("vllm-8000", context=f"co-deploy_{lg_label}")
                 failed.append(f"{lg_label}+{sm_label}")
                 compose_down_all(check=False)
                 continue
 
-            print(">>> vllm-large healthy — now starting vllm-small…", flush=True)
-            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-small"])
+            print(">>> vllm-8000 healthy — now starting vllm-8001…", flush=True)
+            compose_up(["--profile", "co-deploy", "up", "-d", "vllm-8001"])
             try:
-                wait_for_vllm(port=8001, timeout=1800, container_name="vllm-small")
+                wait_for_vllm(port=8001, timeout=1800, container_name="vllm-8001")
             except (TimeoutError, RuntimeError) as e:
-                print(f"  *** FAILED (vllm-small): {e}", file=sys.stderr)
-                _dump_container_logs("vllm-small", context=f"co-deploy_{sm_label}")
+                print(f"  *** FAILED (vllm-8001): {e}", file=sys.stderr)
+                _dump_container_logs("vllm-8001", context=f"co-deploy_{sm_label}")
                 # Also capture the large container logs — it may have OOM'd after small started
-                _dump_container_logs("vllm-large", context=f"co-deploy_{lg_label}_when-small-failed")
+                _dump_container_logs("vllm-8000", context=f"co-deploy_{lg_label}_when-small-failed")
                 failed.append(f"{lg_label}+{sm_label}")
                 compose_down_all(check=False)
                 continue
@@ -778,8 +778,8 @@ def co_deploy_sweep(models: list, label_large: str | None = None, label_small: s
             ])
         except Exception as e:
             print(f"  *** BENCH FAILED: {e}", file=sys.stderr)
-            _dump_container_logs("vllm-large", context=f"co-deploy-benchfail_{lg_label}")
-            _dump_container_logs("vllm-small", context=f"co-deploy-benchfail_{sm_label}")
+            _dump_container_logs("vllm-8000", context=f"co-deploy-benchfail_{lg_label}")
+            _dump_container_logs("vllm-8001", context=f"co-deploy-benchfail_{sm_label}")
             failed.append(f"{lg_label}+{sm_label}")
         finally:
             compose_down_all(check=False)

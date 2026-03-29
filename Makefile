@@ -139,7 +139,7 @@ bench-concurrency:
 # ==============================================================================
 
 logs:
-	$(DC) logs -f vllm-large
+	$(DC) logs -f vllm-8000
 
 status:
 	@echo "=== Containers ==="
