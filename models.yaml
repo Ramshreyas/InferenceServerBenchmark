@@ -122,6 +122,17 @@ models:
 
   # ── Medium (27B–36B) ─────────────────────────────────────────────────────────
 
+  - name: Qwen/Qwen3.5-27B-FP8
+    label: qwen35-27b-fp8-text
+    role: large
+    modality: text
+    quantization: none          # Pre-quantized FP8 (block-128) by Qwen — vLLM auto-detects; do NOT pass --quantization
+    gpu_memory_util: 0.90
+    tensor_parallel: 1
+    topology: dense             # 28B dense (qwen3_5), Gated DeltaNet + Gated Attention hybrid
+    loaded_gb: 28
+    vllm_extra_flags: "--language-model-only --reasoning-parser qwen3"   # Qwen3.5: skip vision encoder; reasoning-parser required for think-block parsing
+
   - name: Qwen/Qwen3.5-27B
     label: qwen35-27b-text
     role: large

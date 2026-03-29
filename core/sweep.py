@@ -511,8 +511,12 @@ def compute_co_deploy_memory(large: dict, small: dict) -> tuple[float | None, fl
 # Co-deploy sweep  (Goal 2)
 # ---------------------------------------------------------------------------
 
-def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_stt: str | None = None):
-    """Run mixed co-deploy: text (large) + STT (small) simultaneously."""
+def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_stt: str | None = None, stt_primary: bool = False):
+    """Run mixed co-deploy: text (large) + STT (small) simultaneously.
+
+    When stt_primary=True, the STT model is placed on port 8000 (vllm-large)
+    and the text model on port 8001 (vllm-small).
+    """
     text_pool = [m for m in models if m.get("role") == "large" and m.get("modality", "text") == "text"]
     stt_pool = [m for m in models if m.get("modality") == "stt"]
 
@@ -552,13 +556,25 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
     for lg, stt, lg_util, stt_util in pairs:
         lg_label = lg.get("label", lg["name"].split("/")[-1])
         stt_label = stt.get("label", stt["name"].split("/")[-1])
-        section(f"MIXED CO-DEPLOY: {lg_label} ({lg_util:.0%}) + {stt_label} ({stt_util:.0%})")
+        port_note = f"STT:{8000 if stt_primary else 8001} Text:{8001 if stt_primary else 8000}"
+        section(f"MIXED CO-DEPLOY: {lg_label} ({lg_util:.0%}) + {stt_label} ({stt_util:.0%})  [{port_note}]")
 
-        write_env_dual(lg, stt, lg_util=lg_util, sm_util=stt_util, hf_token=hf_token)
+        if stt_primary:
+            # STT on port 8000 (vllm-large), text on port 8001 (vllm-small)
+            write_env_dual(stt, lg, lg_util=stt_util, sm_util=lg_util, hf_token=hf_token)
+            expected_8000, expected_8001 = stt["name"], lg["name"]
+            text_endpoint = "http://vllm-small:8001/v1"
+            stt_endpoint = "http://vllm-large:8000/v1"
+        else:
+            # Text on port 8000 (vllm-large), STT on port 8001 (vllm-small)
+            write_env_dual(lg, stt, lg_util=lg_util, sm_util=stt_util, hf_token=hf_token)
+            expected_8000, expected_8001 = lg["name"], stt["name"]
+            text_endpoint = "http://vllm-large:8000/v1"
+            stt_endpoint = "http://vllm-small:8001/v1"
 
-        running_lg = _get_running_model(port=8000)
-        running_stt = _get_running_model(port=8001)
-        if running_lg == lg["name"] and running_stt == stt["name"]:
+        running_8000 = _get_running_model(port=8000)
+        running_8001 = _get_running_model(port=8001)
+        if running_8000 == expected_8000 and running_8001 == expected_8001:
             print(f">>> {lg_label} + {stt_label} already running — reusing containers", flush=True)
         else:
             compose_down_all()
@@ -590,7 +606,12 @@ def mixed_co_deploy_sweep(models: list, label_large: str | None = None, label_st
             pair_tag = f"{lg_label}+{stt_label}"
             run([
                 "docker", "compose", "--profile", "co-deploy",
-                "run", "--rm", "mixed-runner",
+                "run", "--rm",
+                "-e", f"VLLM_ENDPOINT_LARGE={text_endpoint}",
+                "-e", f"VLLM_ENDPOINT_SMALL={stt_endpoint}",
+                "-e", f"LARGE_MODEL_NAME={lg['name']}",
+                "-e", f"SMALL_MODEL_NAME={stt['name']}",
+                "mixed-runner",
                 "python", "/app/core/mixed_co_deploy_runner.py",
                 "--config", "/configs/mixed_co_deploy.yaml",
                 "--sweep-ts", sweep_ts,
@@ -810,6 +831,10 @@ def main():
         "--label-stt",
         help="(mixed-co-deploy only) Filter STT models to this label",
     )
+    parser.add_argument(
+        "--stt-primary", action="store_true",
+        help="(mixed-co-deploy only) Put STT model on port 8000 and text model on port 8001",
+    )
     args = parser.parse_args()
 
     if not args.serve_only and not args.bench and not args.probe:
@@ -823,7 +848,7 @@ def main():
         return
 
     if args.bench == "mixed-co-deploy":
-        mixed_co_deploy_sweep(models, label_large=args.label_large, label_stt=args.label_stt)
+        mixed_co_deploy_sweep(models, label_large=args.label_large, label_stt=args.label_stt, stt_primary=args.stt_primary)
         return
 
     # Filter by label if requested (for single-model benchmarks)

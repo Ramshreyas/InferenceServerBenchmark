@@ -46,6 +46,7 @@ LABEL        ?=   # filter to a single model label (single-model benchmarks)
 LABEL_LARGE  ?=   # filter large-role model (co-deploy)
 LABEL_SMALL  ?=   # filter small-role model (co-deploy)
 LABEL_STT    ?=   # filter STT model (mixed-co-deploy)
+STT_PRIMARY  ?=   # set to 1 to put STT on port 8000 (mixed-co-deploy)
 
 # ==============================================================================
 # PRIMARY  —  models.yaml-driven sweeps
@@ -95,7 +96,8 @@ stt-bench:
 mixed-co-deploy:
 	$(PYTHON) core/sweep.py --bench mixed-co-deploy \
 		$(if $(LABEL_LARGE),--label-large $(LABEL_LARGE),) \
-		$(if $(LABEL_STT),--label-stt $(LABEL_STT),)
+		$(if $(LABEL_STT),--label-stt $(LABEL_STT),) \
+		$(if $(STT_PRIMARY),--stt-primary,)
 
 # ==============================================================================
 # STREAMING STT  —  WebSocket /v1/realtime benchmarks
