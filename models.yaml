@@ -131,7 +131,7 @@ models:
     tensor_parallel: 1
     topology: dense             # 28B dense (qwen3_5), Gated DeltaNet + Gated Attention hybrid
     loaded_gb: 28
-    vllm_extra_flags: "--language-model-only --reasoning-parser qwen3"   # Qwen3.5: skip vision encoder; reasoning-parser required for think-block parsing
+    vllm_extra_flags: "--language-model-only --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder"
 
   - name: Qwen/Qwen3.5-27B
     label: qwen35-27b-text
