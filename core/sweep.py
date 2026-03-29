@@ -134,6 +134,13 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
         lg_max = CO_DEPLOY_DEFAULT_MAX_MODEL_LEN
     if not sm_max and "--max-model-len" not in sm_extra:
         sm_max = CO_DEPLOY_DEFAULT_MAX_MODEL_LEN
+
+    # Auto-cap max_num_seqs for co-deploy: fewer concurrent sequences = less
+    # peak KV cache and activation memory, critical on shared-GPU deployments.
+    if "--max-num-seqs" not in lg_extra:
+        lg_extra = f"{lg_extra} --max-num-seqs {CO_DEPLOY_DEFAULT_MAX_NUM_SEQS}".strip()
+    if "--max-num-seqs" not in sm_extra:
+        sm_extra = f"{sm_extra} --max-num-seqs {CO_DEPLOY_DEFAULT_MAX_NUM_SEQS}".strip()
     lg_image = large.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
     sm_image = small.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
 
@@ -480,10 +487,17 @@ def context_window_check(model: dict, bench_key: str) -> bool:
 GPU_VRAM_GB = 96.0
 CO_DEPLOY_TOTAL_BUDGET = 0.90   # leave 10% for CUDA context / driver / Triton scratch
 CO_DEPLOY_HEADROOM = 1.20       # 20% headroom over loaded_gb for KV cache / activations
-CO_DEPLOY_DEFAULT_MAX_MODEL_LEN = 8192  # safe cap for models without explicit --max-model-len in co-deploy
+CO_DEPLOY_DEFAULT_MAX_MODEL_LEN = 32768 # safe cap for models without explicit --max-model-len in co-deploy
+CO_DEPLOY_DEFAULT_MAX_NUM_SEQS = 8      # limit concurrent sequences to bound peak KV/activation memory
 
 def compute_co_deploy_memory(large: dict, small: dict) -> tuple[float | None, float | None]:
-    """Return (large_util, small_util) proportional to loaded_gb, or (None, None) if pair cannot fit."""
+    """Return (large_util, small_util) as gpu_memory_utilization fractions.
+
+    Strategy: give the smaller model just enough VRAM (loaded_gb × headroom),
+    then give everything remaining to the larger model.  This avoids wasting
+    VRAM on a small model that can't use it (e.g. a 9 GB STT model getting
+    21 GB under proportional split).
+    """
     lg_gb = large.get("loaded_gb", 0)
     sm_gb = small.get("loaded_gb", 0)
     if not lg_gb or not sm_gb:
@@ -496,14 +510,14 @@ def compute_co_deploy_memory(large: dict, small: dict) -> tuple[float | None, fl
     lg_needed = lg_gb * CO_DEPLOY_HEADROOM
     sm_needed = sm_gb * CO_DEPLOY_HEADROOM
     total_needed = lg_needed + sm_needed
+    total_budget_gb = GPU_VRAM_GB * CO_DEPLOY_TOTAL_BUDGET
 
-    if total_needed > GPU_VRAM_GB * CO_DEPLOY_TOTAL_BUDGET:
+    if total_needed > total_budget_gb:
         return None, None  # won't physically fit
 
-    # Proportional split within the total budget
-    ratio = lg_needed / total_needed
-    lg_util = round(CO_DEPLOY_TOTAL_BUDGET * ratio, 2)
-    sm_util = round(CO_DEPLOY_TOTAL_BUDGET * (1 - ratio), 2)
+    # Give the small model exactly what it needs, rest goes to the large model
+    sm_util = round(sm_needed / GPU_VRAM_GB, 2)
+    lg_util = round(CO_DEPLOY_TOTAL_BUDGET - sm_util, 2)
     return lg_util, sm_util
 
 
