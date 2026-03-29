@@ -508,6 +508,62 @@ def compute_co_deploy_memory(large: dict, small: dict) -> tuple[float | None, fl
 
 
 # ---------------------------------------------------------------------------
+# Co-serve  (serve two models without benchmarking)
+# ---------------------------------------------------------------------------
+
+def co_serve(
+    models: list,
+    label_a: str,
+    label_b: str,
+):
+    """Serve two models simultaneously: label_a on port 8000, label_b on port 8001.
+
+    Computes VRAM split automatically from loaded_gb in models.yaml.
+    Does NOT run any benchmark — just boots and waits.
+    """
+    pool = {m.get("label"): m for m in models}
+    model_a = pool.get(label_a)
+    model_b = pool.get(label_b)
+    if not model_a:
+        print(f"ERROR: No model with label '{label_a}' in models.yaml", file=sys.stderr)
+        sys.exit(1)
+    if not model_b:
+        print(f"ERROR: No model with label '{label_b}' in models.yaml", file=sys.stderr)
+        sys.exit(1)
+
+    a_util, b_util = compute_co_deploy_memory(model_a, model_b)
+    if a_util is None:
+        print(
+            f"ERROR: {label_a} ({model_a.get('loaded_gb', '?')} GB) + "
+            f"{label_b} ({model_b.get('loaded_gb', '?')} GB) won't fit in "
+            f"{GPU_VRAM_GB * CO_DEPLOY_TOTAL_BUDGET:.0f} GB budget.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    section(
+        f"CO-SERVE: {label_a} ({a_util:.0%}) on :8000  +  {label_b} ({b_util:.0%}) on :8001"
+    )
+
+    hf_token = os.environ.get("HF_TOKEN")
+    write_env_dual(model_a, model_b, lg_util=a_util, sm_util=b_util, hf_token=hf_token)
+    compose_down_all()
+
+    print(">>> Starting port-8000 model first…", flush=True)
+    compose_up(["--profile", "co-deploy", "up", "-d", "vllm-large"])
+    wait_for_vllm(port=8000, timeout=1800, container_name="vllm-large")
+
+    print(">>> Port-8000 healthy — starting port-8001 model…", flush=True)
+    compose_up(["--profile", "co-deploy", "up", "-d", "vllm-small"])
+    wait_for_vllm(port=8001, timeout=1800, container_name="vllm-small")
+
+    section("BOTH MODELS READY")
+    print(f"  :8000  →  {model_a['name']}  (label={label_a})")
+    print(f"  :8001  →  {model_b['name']}  (label={label_b})")
+    print(f"\nContainers will stay up. Stop with: make stop")
+
+
+# ---------------------------------------------------------------------------
 # Co-deploy sweep  (Goal 2)
 # ---------------------------------------------------------------------------
 
@@ -835,12 +891,21 @@ def main():
         "--stt-primary", action="store_true",
         help="(mixed-co-deploy only) Put STT model on port 8000 and text model on port 8001",
     )
+    parser.add_argument(
+        "--co-serve", nargs=2, metavar=("LABEL_8000", "LABEL_8001"),
+        help="Serve two models: first label on port 8000, second on port 8001 (no benchmark)",
+    )
     args = parser.parse_args()
 
-    if not args.serve_only and not args.bench and not args.probe:
-        parser.error("--bench or --probe is required unless --serve-only is set")
+    if not args.serve_only and not args.bench and not args.probe and not args.co_serve:
+        parser.error("--bench, --probe, --serve-only, or --co-serve is required")
 
     models = load_models(args.models_file)
+
+    # ── Co-serve: boot two models, no benchmark ───────────────────────────────
+    if args.co_serve:
+        co_serve(models, label_a=args.co_serve[0], label_b=args.co_serve[1])
+        return
 
     # ── Co-deploy: separate code paths ─────────────────────────────────────────
     if args.bench == "co-deploy":

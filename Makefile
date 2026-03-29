@@ -43,6 +43,8 @@
 DC           := docker compose
 PYTHON       := python3
 LABEL        ?=   # filter to a single model label (single-model benchmarks)
+LABEL_A      ?=   # model on port 8000 (co-serve)
+LABEL_B      ?=   # model on port 8001 (co-serve)
 LABEL_LARGE  ?=   # filter large-role model (co-deploy)
 LABEL_SMALL  ?=   # filter small-role model (co-deploy)
 LABEL_STT    ?=   # filter STT model (mixed-co-deploy)
@@ -75,6 +77,15 @@ serve:
 		exit 1; \
 	fi
 	$(PYTHON) core/sweep.py --serve-only --label $(LABEL)
+
+# Boot two models simultaneously: LABEL_A on :8000, LABEL_B on :8001
+co-serve:
+	@if [ -z "$(LABEL_A)" ] || [ -z "$(LABEL_B)" ]; then \
+		echo "Usage: make co-serve LABEL_A=<port-8000-model> LABEL_B=<port-8001-model>"; \
+		echo "Labels are defined in models.yaml"; \
+		exit 1; \
+	fi
+	$(PYTHON) core/sweep.py --co-serve $(LABEL_A) $(LABEL_B)
 
 # ==============================================================================
 # STT (Speech-to-Text)  —  models.yaml-driven sweeps
