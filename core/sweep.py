@@ -545,11 +545,22 @@ def co_serve(
         print(f"ERROR: No model with label '{label_b}' in models.yaml", file=sys.stderr)
         sys.exit(1)
 
-    a_util, b_util = compute_co_deploy_memory(model_a, model_b)
+    # Determine which model is larger — compute_co_deploy_memory gives the
+    # remainder budget to the first ("large") arg, so we must pass the heavier
+    # model first regardless of port assignment.
+    a_gb = model_a.get("loaded_gb", 0)
+    b_gb = model_b.get("loaded_gb", 0)
+    if a_gb >= b_gb:
+        lg_util, sm_util = compute_co_deploy_memory(model_a, model_b)
+        a_util, b_util = lg_util, sm_util
+    else:
+        lg_util, sm_util = compute_co_deploy_memory(model_b, model_a)
+        a_util, b_util = sm_util, lg_util
+
     if a_util is None:
         print(
-            f"ERROR: {label_a} ({model_a.get('loaded_gb', '?')} GB) + "
-            f"{label_b} ({model_b.get('loaded_gb', '?')} GB) won't fit in "
+            f"ERROR: {label_a} ({a_gb} GB) + "
+            f"{label_b} ({b_gb} GB) won't fit in "
             f"{GPU_VRAM_GB * CO_DEPLOY_TOTAL_BUDGET:.0f} GB budget.",
             file=sys.stderr,
         )
