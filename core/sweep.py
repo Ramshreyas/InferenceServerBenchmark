@@ -491,9 +491,9 @@ def context_window_check(model: dict, bench_key: str) -> bool:
 GPU_VRAM_GB = 96.0
 CO_DEPLOY_TOTAL_BUDGET = 0.90   # leave 10% for CUDA context / driver / Triton scratch
 CO_DEPLOY_HEADROOM = 1.20       # 20% headroom over loaded_gb for KV cache / activations
-CO_DEPLOY_DEFAULT_MAX_MODEL_LEN = 32768 # safe cap for text/vlm models without explicit --max-model-len in co-deploy
+CO_DEPLOY_DEFAULT_MAX_MODEL_LEN = 65536 # safe cap for text/vlm models without explicit --max-model-len in co-deploy
 CO_DEPLOY_DEFAULT_STT_MAX_MODEL_LEN = 8192  # STT encoder tokens can be large; 8K covers ~30s audio + decoder output
-CO_DEPLOY_DEFAULT_MAX_NUM_SEQS = 8      # limit concurrent sequences to bound peak KV/activation memory
+CO_DEPLOY_DEFAULT_MAX_NUM_SEQS = 4      # limit concurrent sequences to bound peak KV/activation memory
 
 def compute_co_deploy_memory(large: dict, small: dict) -> tuple[float | None, float | None]:
     """Return (large_util, small_util) as gpu_memory_utilization fractions.
