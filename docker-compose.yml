@@ -12,7 +12,7 @@
 services:
   # ── vLLM server on port 8000 (primary / single model) ─────────────────────
   vllm-8000:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:cu130-nightly-54a62a79f70982742a227c845b96148e6401d0e7}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:cu130-nightly}
     container_name: vllm-8000
     runtime: nvidia
     restart: unless-stopped
@@ -59,7 +59,7 @@ services:
 
   # ── vLLM server on port 8001 (co-deploy / co-serve only) ──────────────────
   vllm-8001:
-    image: ${SMALL_VLLM_IMAGE:-vllm/vllm-openai:cu130-nightly-54a62a79f70982742a227c845b96148e6401d0e7}
+    image: ${SMALL_VLLM_IMAGE:-vllm/vllm-openai:cu130-nightly}
     container_name: vllm-8001
     runtime: nvidia
     environment:

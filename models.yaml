@@ -240,7 +240,7 @@ models:
     tensor_parallel: 1
     topology: dense
     loaded_gb: 9
-    vllm_extra_flags: "--compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
+    vllm_extra_flags: "--max-model-len 2048 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
 
   - name: mistralai/Voxtral-Mini-3B-2507
     label: voxtral-mini-3b
