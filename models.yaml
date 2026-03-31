@@ -252,3 +252,14 @@ models:
     topology: dense
     loaded_gb: 6
     vllm_extra_flags: "--tokenizer_mode mistral --config_format mistral --load_format mistral"
+
+  - name: CohereLabs/cohere-transcribe-03-2026
+    label: cohere-transcribe-2b
+    role: small
+    modality: stt               # Speech-to-text — 2B conformer encoder-decoder ASR, 14 languages
+    quantization: none          # BF16; 2B params (cohere_asr)
+    gpu_memory_util: 0.85
+    tensor_parallel: 1
+    topology: dense
+    loaded_gb: 5
+    vllm_extra_flags: "--trust-remote-code"
