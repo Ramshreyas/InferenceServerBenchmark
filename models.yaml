@@ -132,7 +132,7 @@ models:
     topology: sparse_moe        # 26B total, 4B active per token; 128 fine-grained experts, top-8 routing
     loaded_gb: 52               # ~26B × 2 bytes BF16; calibrate after solo load with nvidia-smi
     vllm_image: vllm/vllm-openai:gemma4-cu130   # Gemma 4 requires purpose-built vLLM image
-    vllm_extra_flags: "--limit-mm-per-prompt '{\"image\": 0, \"audio\": 0}' --max-model-len 32768"   # text-only: skip multimodal profiling; cap context to avoid OOM
+    vllm_extra_flags: "--limit-mm-per-prompt '{\"image\": 0, \"audio\": 0}' --max-model-len 32768 --enable-auto-tool-choice --tool-call-parser gemma4 --reasoning-parser gemma4"
 
   - name: Qwen/Qwen3.5-27B-FP8
     label: qwen35-27b-fp8-text
