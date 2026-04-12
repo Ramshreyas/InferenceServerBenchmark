@@ -19,14 +19,12 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0
-      - LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64
       - HF_TOKEN=${HF_TOKEN:-}
       - VLLM_DISABLE_COMPILE_CACHE=1
     ports:
       - "8000:8000"
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
-      - /usr/local/cuda-13.1/compat:/usr/local/cuda/compat:ro
       - ./results:/results
       - ./scripts/vllm-entrypoint.sh:/usr/local/bin/vllm-entrypoint.sh:ro
     entrypoint: ["/usr/local/bin/vllm-entrypoint.sh"]
@@ -65,14 +63,12 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0
-      - LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64
       - HF_TOKEN=${HF_TOKEN:-}
       - VLLM_DISABLE_COMPILE_CACHE=1
     ports:
       - "8001:8001"
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
-      - /usr/local/cuda-13.1/compat:/usr/local/cuda/compat:ro
       - ./results:/results
       - ./scripts/vllm-entrypoint.sh:/usr/local/bin/vllm-entrypoint.sh:ro
     entrypoint: ["/usr/local/bin/vllm-entrypoint.sh"]

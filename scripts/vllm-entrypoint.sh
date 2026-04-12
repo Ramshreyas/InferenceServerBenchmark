@@ -8,6 +8,9 @@
 # =============================================================================
 set -e
 
+# Install vLLM audio extras (required by Cohere Transcribe, Whisper, etc.)
+pip install --quiet --no-cache-dir 'vllm[audio]' 2>/dev/null || true
+
 # Install audio processing libraries (required by Voxtral / mistral-common tokenizer)
 pip install --quiet --no-cache-dir soxr librosa soundfile 'mistral-common[audio]' 2>/dev/null || true
 
