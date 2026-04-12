@@ -36,7 +36,7 @@ services:
       --gpu-memory-utilization ${GPU_MEMORY_UTIL:-0.92}
       ${MAX_MODEL_LEN_FLAG:-}
       ${QUANTIZATION_FLAG:-}
-      ${ENABLE_PREFIX_CACHING_FLAG:---enable-prefix-caching}
+      ${ENABLE_PREFIX_CACHING_FLAG---enable-prefix-caching}
       --trust-remote-code
       ${EXTRA_VLLM_FLAGS:-}
     deploy:
