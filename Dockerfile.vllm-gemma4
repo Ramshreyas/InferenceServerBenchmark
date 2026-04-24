@@ -16,11 +16,17 @@
 
 FROM vllm/vllm-openai:cu130-nightly
 
-# Locate the python3.12 binary that owns vLLM's site-packages and upgrade
-# transformers there. Running as root in Docker, pip installs to
-# /usr/local/lib/python3.12/dist-packages/ — the same prefix as vLLM.
-RUN PYTHON=$(find /usr -name "python3.12" -type f -executable 2>/dev/null | head -1) \
-    && [ -n "$PYTHON" ] || { echo "ERROR: python3.12 not found under /usr"; exit 1; } \
-    && echo "Using Python: $PYTHON" \
-    && "$PYTHON" -m pip install --no-cache-dir --upgrade "transformers>=5.5.3" \
-    && "$PYTHON" -c "import transformers; print('transformers', transformers.__version__)"
+# Debug: show what Python interpreters and pip binaries exist, then
+# upgrade transformers directly into the site-packages dir vLLM uses.
+# We know from container tracebacks that vLLM lives at:
+#   /usr/local/lib/python3.12/dist-packages/
+# So we install there directly using pip's --target flag, which
+# bypasses any interpreter PATH confusion entirely.
+RUN echo "=== Python binaries ===" \
+    && find / -name "python3*" -type f -executable 2>/dev/null \
+    && echo "=== pip binaries ===" \
+    && find / -name "pip*" -type f -executable 2>/dev/null \
+    && echo "=== Installing transformers ===" \
+    && pip install --no-cache-dir --upgrade --target /usr/local/lib/python3.12/dist-packages/ "transformers>=5.5.3" \
+    && echo "=== Verify ===" \
+    && PYTHONPATH=/usr/local/lib/python3.12/dist-packages python3 -c "import transformers; print('transformers', transformers.__version__)"
