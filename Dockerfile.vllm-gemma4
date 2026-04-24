@@ -1,24 +1,26 @@
 # =============================================================================
 # Dockerfile.vllm-gemma4 — vLLM image with Transformers v5.5.3+ for Gemma 4
 # =============================================================================
-# Both gemma4-cu130 and cu130-nightly ship with an old transformers that
+# Both gemma4-cu130 and cu130-nightly ship with old transformers that
 # predates gemma4 architecture registration.
 #
-# vLLM installs into /usr/local/lib/python3.12/dist-packages/, so we must
-# upgrade transformers via the explicit /usr/local/bin/python3.12 binary to
-# ensure we hit the correct site-packages (not any other python on PATH).
+# vLLM packages live at /usr/local/lib/python3.12/dist-packages/ but the
+# python3.12 binary location varies between images (not always on PATH as
+# 'python3.12'). We use `find` to locate it reliably.
 #
 # Build:
 #   make build-gemma4
 #   # or directly:
-#   docker build -f Dockerfile.vllm-gemma4 -t vllm/vllm-openai:gemma4-v2 .
+#   docker build --no-cache -f Dockerfile.vllm-gemma4 -t vllm/vllm-openai:gemma4-v2 .
 # =============================================================================
 
 FROM vllm/vllm-openai:cu130-nightly
 
-# Upgrade transformers in whichever Python interpreter vLLM actually uses.
-# Read the shebang from the vllm CLI script — this is the definitive Python
-# binary regardless of image layout or PATH ordering.
-RUN PYTHON=$(awk 'NR==1{gsub(/^#!/,""); print}' $(which vllm)) \
+# Locate the python3.12 binary that owns vLLM's site-packages and upgrade
+# transformers there. Running as root in Docker, pip installs to
+# /usr/local/lib/python3.12/dist-packages/ — the same prefix as vLLM.
+RUN PYTHON=$(find /usr -name "python3.12" -type f -executable 2>/dev/null | head -1) \
+    && [ -n "$PYTHON" ] || { echo "ERROR: python3.12 not found under /usr"; exit 1; } \
+    && echo "Using Python: $PYTHON" \
     && "$PYTHON" -m pip install --no-cache-dir --upgrade "transformers>=5.5.3" \
     && "$PYTHON" -c "import transformers; print('transformers', transformers.__version__)"
