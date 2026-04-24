@@ -132,7 +132,7 @@ models:
     topology: sparse_moe        # 26B total, 4B active per token; 128 fine-grained experts, top-8 routing
     loaded_gb: 52               # ~26B × 2 bytes BF16; calibrate after solo load with nvidia-smi
     vllm_image: vllm/vllm-openai:gemma4-v2      # gemma4-cu130 + transformers>=5.5.3 (Gemma4 arch fix); build with: make build-gemma4
-    vllm_extra_flags: "--limit-mm-per-prompt '{\"image\": 0, \"audio\": 0}' --max-model-len 131072 --enable-auto-tool-choice --tool-call-parser gemma4 --reasoning-parser gemma4"
+    vllm_extra_flags: "--limit-mm-per-prompt '{\"image\": 0, \"audio\": 0}' --max-model-len 131072 --enable-auto-tool-choice --tool-call-parser functiongemma --reasoning-parser gemma4"
 
   - name: google/gemma-4-26B-A4B-it
     label: gemma4-26b-a4b-vlm
@@ -144,7 +144,7 @@ models:
     topology: sparse_moe        # 26B total, 4B active per token; 128 fine-grained experts, top-8 routing
     loaded_gb: 57               # ~52 GB weights + ~5 GB for ~550M vision encoder
     vllm_image: vllm/vllm-openai:gemma4-v2      # gemma4-cu130 + transformers>=5.5.3 (Gemma4 arch fix); build with: make build-gemma4
-    vllm_extra_flags: "--max-model-len 131072 --enable-auto-tool-choice --tool-call-parser gemma4 --reasoning-parser gemma4"
+    vllm_extra_flags: "--max-model-len 131072 --enable-auto-tool-choice --tool-call-parser functiongemma --reasoning-parser gemma4"
 
   - name: Qwen/Qwen3.5-27B-FP8
     label: qwen35-27b-fp8-text
