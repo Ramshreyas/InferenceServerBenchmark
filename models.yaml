@@ -248,7 +248,7 @@ models:
     role: small
     modality: stt               # Speech-to-text — benchmarked with WER on audio datasets
     quantization: none          # BF16; 3.4B LLM + 970M Audio Encoder = 4.4B total
-    gpu_memory_util: 0.85
+    gpu_memory_util: 0.95
     tensor_parallel: 1
     topology: dense
     loaded_gb: 9
@@ -259,7 +259,7 @@ models:
     role: small
     modality: stt               # Speech-to-text — benchmarked with WER on audio datasets
     quantization: none          # ~3B params
-    gpu_memory_util: 0.85
+    gpu_memory_util: 0.95
     tensor_parallel: 1
     topology: dense
     loaded_gb: 6
