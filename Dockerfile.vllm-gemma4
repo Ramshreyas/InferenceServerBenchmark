@@ -26,7 +26,7 @@ RUN echo "=== Python binaries ===" \
     && find / -name "python3*" -type f -executable 2>/dev/null \
     && echo "=== pip binaries ===" \
     && find / -name "pip*" -type f -executable 2>/dev/null \
-    && echo "=== Installing transformers ===" \
-    && pip install --no-cache-dir --upgrade --target /usr/local/lib/python3.12/dist-packages/ "transformers>=5.5.3" \
+    && echo "=== Installing transformers from git ===" \
+    && pip install --no-cache-dir --upgrade --target /usr/local/lib/python3.12/dist-packages/ git+https://github.com/huggingface/transformers.git \
     && echo "=== Verify ===" \
     && PYTHONPATH=/usr/local/lib/python3.12/dist-packages python3 -c "import transformers; print('transformers', transformers.__version__)"
