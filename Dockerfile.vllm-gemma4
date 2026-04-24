@@ -22,7 +22,8 @@ FROM vllm/vllm-openai:cu130-nightly
 #   /usr/local/lib/python3.12/dist-packages/
 # So we install there directly using pip's --target flag, which
 # bypasses any interpreter PATH confusion entirely.
-RUN echo "=== Python binaries ===" \
+RUN apt-get update && apt-get install -y git \
+    && echo "=== Python binaries ===" \
     && find / -name "python3*" -type f -executable 2>/dev/null \
     && echo "=== pip binaries ===" \
     && find / -name "pip*" -type f -executable 2>/dev/null \
