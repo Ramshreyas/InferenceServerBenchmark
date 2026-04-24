@@ -1,0 +1,23 @@
+# =============================================================================
+# Dockerfile.vllm-gemma4 — vLLM image with Transformers v5.5.3+ for Gemma 4
+# =============================================================================
+# The stock vllm/vllm-openai:gemma4-cu130 image bundles an outdated
+# transformers that predates the `gemma4` architecture registration.
+# vLLM v0.19.1 (released 2026-04-17) ships Transformers v5.5.3 with full
+# Gemma 4 support plus dedicated bug fixes for streaming tool calls,
+# quantized MoE, and token-repetition.
+#
+# This image layers the transformers upgrade on top of the cu130-optimised
+# base so that CUDA 13.0 / Blackwell kernels are preserved.
+#
+# Build:
+#   make build-gemma4
+#   # or directly:
+#   docker build -f Dockerfile.vllm-gemma4 -t vllm/vllm-openai:gemma4-v2 .
+# =============================================================================
+
+FROM vllm/vllm-openai:gemma4-cu130
+
+# Upgrade transformers to v5.5.3+ (fixes gemma4 architecture registration)
+# Pin to a known-good version rather than latest to keep builds reproducible.
+RUN pip install --no-cache-dir "transformers>=5.5.3"

@@ -153,6 +153,10 @@ status:
 stop:
 	$(DC) down
 
+# Build the Gemma 4 vLLM image with Transformers v5.5.3+ (fixes gemma4 architecture)
+build-gemma4:
+	docker build -f Dockerfile.vllm-gemma4 -t vllm/vllm-openai:gemma4-v2 .
+
 results:
 	@echo "=== Result Files (most recent first) ==="
 	@ls -lht results/ | head -40
@@ -171,4 +175,4 @@ tui:
 	stt-sanity stt-bench mixed-co-deploy download-stt-data \
 	stt-streaming-sanity stt-streaming-bench \
 	bench-sanity bench-concurrency \
-	logs status stop results gpu-monitor prefetch tui
+	logs status stop build-gemma4 results gpu-monitor prefetch tui
