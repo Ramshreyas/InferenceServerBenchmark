@@ -19,7 +19,6 @@
 FROM vllm/vllm-openai:gemma4-cu130
 
 # Upgrade transformers to v5.5.3+ (fixes gemma4 architecture registration).
-# Use `python -m pip` to ensure we target the exact interpreter vLLM uses,
-# regardless of PATH ordering or virtualenv layout in the base image.
-RUN python -m pip install --no-cache-dir --upgrade "transformers>=5.5.3" \
-    && python -c "import transformers; print('transformers', transformers.__version__)"
+# Use python3 explicitly — the base image has no `python` symlink.
+RUN python3 -m pip install --no-cache-dir --upgrade "transformers>=5.5.3" \
+    && python3 -c "import transformers; print('transformers', transformers.__version__)"
