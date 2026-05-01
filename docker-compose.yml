@@ -27,6 +27,7 @@ services:
       - ~/.cache/huggingface:/root/.cache/huggingface
       - ./results:/results
       - ./scripts/vllm-entrypoint.sh:/usr/local/bin/vllm-entrypoint.sh:ro
+      - ./tool_chat_template_gemma4.jinja:/app/template.jinja:ro
     entrypoint: ["/usr/local/bin/vllm-entrypoint.sh"]
     command: >
       --host 0.0.0.0
