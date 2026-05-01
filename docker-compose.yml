@@ -21,6 +21,7 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - HF_TOKEN=${HF_TOKEN:-}
       - VLLM_DISABLE_COMPILE_CACHE=1
+      - SKIP_ENTRYPOINT_PIP=${SKIP_ENTRYPOINT_PIP:-0}
     ports:
       - "8000:8000"
     volumes:
@@ -66,6 +67,7 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - HF_TOKEN=${HF_TOKEN:-}
       - VLLM_DISABLE_COMPILE_CACHE=1
+      - SKIP_ENTRYPOINT_PIP=${SMALL_SKIP_ENTRYPOINT_PIP:-0}
     ports:
       - "8001:8001"
     volumes:

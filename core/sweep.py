@@ -81,6 +81,9 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
 
     extra_flags = model.get("vllm_extra_flags", "")
     vllm_image = model.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
+    # The gemma4 image bakes in a patched transformers; reinstalling vllm[audio]
+    # in the entrypoint would clobber it and break model loading.
+    skip_pip = "1" if "gemma4" in vllm_image else "0"
 
     lines = [
         f"VLLM_IMAGE={vllm_image}",
@@ -91,6 +94,7 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
         f"QUANTIZATION_FLAG={quant_flag}",
         f"ENABLE_PREFIX_CACHING_FLAG={prefix_flag}",
         f"EXTRA_VLLM_FLAGS={extra_flags}",
+        f"SKIP_ENTRYPOINT_PIP={skip_pip}",
         # Placeholders so docker compose doesn't warn about unset vars
         "SMALL_VLLM_IMAGE=vllm/vllm-openai:cu130-nightly",
         "SMALL_MODEL_NAME=",
@@ -99,6 +103,7 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
         "SMALL_MAX_MODEL_LEN_FLAG=",
         "SMALL_QUANTIZATION_FLAG=",
         "SMALL_EXTRA_VLLM_FLAGS=",
+        "SMALL_SKIP_ENTRYPOINT_PIP=0",
     ]
     if hf_token:
         lines.append(f"HF_TOKEN={hf_token}")
@@ -147,6 +152,8 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
         sm_extra = f"{sm_extra} --max-num-seqs {CO_DEPLOY_DEFAULT_MAX_NUM_SEQS}".strip()
     lg_image = large.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
     sm_image = small.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
+    lg_skip_pip = "1" if "gemma4" in lg_image else "0"
+    sm_skip_pip = "1" if "gemma4" in sm_image else "0"
 
     lines = [
         # ── Port-8000 model (vllm-8000) ──
@@ -158,6 +165,7 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
         f"QUANTIZATION_FLAG={f'--quantization {lg_quant}' if lg_quant != 'none' else ''}",
         f"ENABLE_PREFIX_CACHING_FLAG=--enable-prefix-caching",
         f"EXTRA_VLLM_FLAGS={lg_extra}",
+        f"SKIP_ENTRYPOINT_PIP={lg_skip_pip}",
         # ── Port-8001 model (vllm-8001) ──
         f"SMALL_VLLM_IMAGE={sm_image}",
         f"SMALL_MODEL_NAME={small['name']}",
@@ -166,6 +174,7 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
         f"SMALL_MAX_MODEL_LEN_FLAG={f'--max-model-len {sm_max}' if sm_max and str(sm_max) != 'auto' else ''}",
         f"SMALL_QUANTIZATION_FLAG={f'--quantization {sm_quant}' if sm_quant != 'none' else ''}",
         f"SMALL_EXTRA_VLLM_FLAGS={sm_extra}",
+        f"SMALL_SKIP_ENTRYPOINT_PIP={sm_skip_pip}",
     ]
     if hf_token:
         lines.append(f"HF_TOKEN={hf_token}")

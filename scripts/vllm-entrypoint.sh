@@ -8,16 +8,21 @@
 # =============================================================================
 set -e
 
-# Install vLLM audio extras (required by Cohere Transcribe, Whisper, etc.)
-pip install --quiet --no-cache-dir 'vllm[audio]' 2>/dev/null || true
+# Skip extra pip installs when the base image already ships the right deps
+# (e.g. vllm/vllm-openai:gemma4-cu130 has a patched transformers that we must
+# NOT clobber by reinstalling vllm[audio]).
+if [[ "${SKIP_ENTRYPOINT_PIP:-0}" != "1" ]]; then
+  # Install vLLM audio extras (required by Cohere Transcribe, Whisper, etc.)
+  pip install --quiet --no-cache-dir 'vllm[audio]' 2>/dev/null || true
 
-# Install audio processing libraries (required by Voxtral / mistral-common tokenizer)
-pip install --quiet --no-cache-dir soxr librosa soundfile 'mistral-common[audio]' 2>/dev/null || true
+  # Install audio processing libraries (required by Voxtral / mistral-common tokenizer)
+  pip install --quiet --no-cache-dir soxr librosa soundfile 'mistral-common[audio]' 2>/dev/null || true
 
-# NOTE: Do NOT upgrade transformers here. The vLLM nightly ships a compatible
-# version; upgrading pulls in huggingface_hub with strict dataclass validation
-# that breaks vLLM's internal WhisperConfig remapping for Voxtral
-# (max_source_positions=None → TypeError).
+  # NOTE: Do NOT upgrade transformers here. The vLLM nightly ships a compatible
+  # version; upgrading pulls in huggingface_hub with strict dataclass validation
+  # that breaks vLLM's internal WhisperConfig remapping for Voxtral
+  # (max_source_positions=None → TypeError).
+fi
 
 # Hand off to vLLM serve with all original arguments
 exec vllm serve "$@"
