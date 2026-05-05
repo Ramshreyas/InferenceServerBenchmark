@@ -108,6 +108,7 @@ models:
     topology: sparse_moe        # 117B total, 5.1B active per token (MoE, not dense)
     loaded_gb: 60               # ~60 GB with native MXFP4 (was 66 GB under Marlin FP4→FP16 fallback)
     vllm_image: vllm/vllm-openai:gptoss   # Official image with native MXFP4 kernels (verified working on Blackwell + driver 595)
+    vllm_extra_flags: "--attention-backend FLASHINFER"   # GPT-OSS uses attention sinks; FA2 lacks support, FA3 unavailable on SM120 Blackwell
 
   - name: Qwen/Qwen3-Coder-Next-FP8
     label: qwen3-coder-next-fp8
