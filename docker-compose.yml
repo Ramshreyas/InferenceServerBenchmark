@@ -31,9 +31,9 @@ services:
       - ./tool_chat_template_gemma4.jinja:/app/template.jinja:ro
     entrypoint: ["/usr/local/bin/vllm-entrypoint.sh"]
     command: >
+      ${MODEL_NAME:-mistralai/Mistral-7B-Instruct-v0.3}
       --host 0.0.0.0
       --port 8000
-      --model ${MODEL_NAME:-mistralai/Mistral-7B-Instruct-v0.3}
       --tensor-parallel-size ${TENSOR_PARALLEL:-1}
       --gpu-memory-utilization ${GPU_MEMORY_UTIL:-0.92}
       ${MAX_MODEL_LEN_FLAG:-}
@@ -76,9 +76,9 @@ services:
       - ./scripts/vllm-entrypoint.sh:/usr/local/bin/vllm-entrypoint.sh:ro
     entrypoint: ["/usr/local/bin/vllm-entrypoint.sh"]
     command: >
+      ${SMALL_MODEL_NAME}
       --host 0.0.0.0
       --port 8001
-      --model ${SMALL_MODEL_NAME}
       --tensor-parallel-size ${SMALL_TENSOR_PARALLEL:-1}
       --gpu-memory-utilization ${SMALL_GPU_MEMORY_UTIL:-0.25}
       ${SMALL_MAX_MODEL_LEN_FLAG:-}
