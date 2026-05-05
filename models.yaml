@@ -107,13 +107,16 @@ models:
     tensor_parallel: 1
     topology: sparse_moe        # 117B total, 5.1B active per token (MoE, not dense)
     loaded_gb: 60               # ~60 GB with native MXFP4 (was 66 GB under Marlin FP4→FP16 fallback)
-    vllm_image: vllm/vllm-openai:gptoss   # Official image with native MXFP4 kernels (verified working on Blackwell + driver 595)
+    # The pinned :gptoss image (vllm 0.10.2.dev2, Aug 2025) ships a Triton MXFP4 MoE kernel
+    # that emits PTX (.tile::gather4 with .shared::cluster) only valid on sm_100a (B200), not
+    # sm_120a (consumer Blackwell / RTX PRO 6000 / 5090). vLLM ≥ 0.11.1 RC5 routes sm_120a
+    # through the Marlin MXFP4 kernel by default. Use :latest. See vllm-project/vllm#27542.
+    vllm_image: vllm/vllm-openai:latest
     # GPT-OSS uses attention sinks. FA2 lacks sinks support; FA3 unavailable on SM120 Blackwell;
-    # FlashInfer in this image has a sinks dtype bug (expects fp32, gets bf16). TRITON works.
+    # TRITON_ATTN_VLLM_V1 supports sinks and is stable on sm_120a.
     attention_backend: TRITON_ATTN_VLLM_V1
-    # Bundled Triton MXFP4 MoE kernel emits PTX (.tile::gather4 with .shared::cluster) only
-    # supported on sm_100a (B200), not sm_120a (consumer Blackwell / RTX PRO 6000). Force the
-    # Marlin kernel instead. See vllm-project/vllm#27542.
+    # Belt-and-suspenders: forces Marlin MXFP4 on vllm versions that still default to Triton.
+    # No-op on RC5+ (which already picks Marlin on sm_120a).
     mxfp4_use_marlin: true
 
   - name: Qwen/Qwen3-Coder-Next-FP8
