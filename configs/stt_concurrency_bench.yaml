@@ -23,9 +23,10 @@ dataset:
   max_files: 200              # Use up to 200 files for thorough benchmarking
 
 # Concurrency levels to sweep — measures how the model degrades under load.
-# Range covers sanity (8), the previously-proven point (32), and the L40S
-# stretch range (48–128) reached by the patched/-fast/-64/-fp8kv/-128 variants.
-concurrency_levels: [8, 16, 32, 48, 64, 96, 128]
+# Level 1 anchors the single-user baseline (WER and per-request latency at
+# zero contention); levels 8–128 trace the throughput/latency curve and
+# expose the GPU compute ceiling on a single L40S.
+concurrency_levels: [1, 8, 16, 32, 48, 64, 96, 128]
 
 requests:
   num_requests: 50            # Per concurrency level

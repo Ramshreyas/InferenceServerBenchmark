@@ -1,6 +1,19 @@
 # =============================================================================
 # Dockerfile.vllm-voxtral-fixed — vLLM image with PR #39229 hot-patched in
 # =============================================================================
+#
+# RETIRE THIS FILE once vLLM ships PR #39229 in a release that propagates to
+# the cu130-nightly tag.  Track: https://github.com/vllm-project/vllm/pull/39229
+# After it merges and the fix is in a recent cu130-nightly:
+#   1. Run a sanity bench on stock cu130-nightly with concurrency >= 3 to
+#      confirm the crash is gone.
+#   2. Drop the `vllm_image: vllm/vllm-openai:voxtral-fix` line from the
+#      voxtral-mini-4b-patched entry in models.yaml.
+#   3. Delete this Dockerfile and the `build-voxtral-fix` target in Makefile.
+#   4. Remove the "voxtral-fix" substring check in core/sweep.py
+#      (write_env and write_env_dual `skip_pip` calculations).
+#
+# =============================================================================
 # Voxtral-Mini-4B-Realtime-2602 crashes on V1 engine when the scheduler mixes a
 # prefilling request (audio) with one or more decoding requests (text-only) in
 # the same step. The realtime model's `embed_input_ids` returns a flat MM-only
