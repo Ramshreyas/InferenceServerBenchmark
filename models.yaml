@@ -294,6 +294,60 @@ models:
     vllm_image: vllm/vllm-openai:voxtral-fix
     vllm_extra_flags: "--max-model-len 1024 --max-num-seqs 32 --max-num-batched-tokens 32768 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
 
+  # Variant 1 — Premium UX: smallest batch, lowest tail latency. Expect <16 user cap.
+  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
+    label: voxtral-mini-4b-patched-fast
+    role: small
+    modality: stt
+    quantization: none
+    gpu_memory_util: 0.85
+    tensor_parallel: 1
+    topology: dense
+    loaded_gb: 9
+    vllm_image: vllm/vllm-openai:voxtral-fix
+    vllm_extra_flags: "--max-model-len 512 --max-num-seqs 16 --max-num-batched-tokens 8192 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
+
+  # Variant 3 — Sweet spot: halve per-request KV (max-model-len 512), double seqs to 64.
+  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
+    label: voxtral-mini-4b-patched-64
+    role: small
+    modality: stt
+    quantization: none
+    gpu_memory_util: 0.95
+    tensor_parallel: 1
+    topology: dense
+    loaded_gb: 9
+    vllm_image: vllm/vllm-openai:voxtral-fix
+    vllm_extra_flags: "--max-model-len 512 --max-num-seqs 64 --max-num-batched-tokens 32768 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
+
+  # Variant 4 — L40S-specific FP8 KV cache (4th-gen Tensor Cores). Same seqs as -64
+  # but at full 1024 transcript budget; FP8 KV roughly halves KV memory per request.
+  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
+    label: voxtral-mini-4b-patched-fp8kv
+    role: small
+    modality: stt
+    quantization: none
+    gpu_memory_util: 0.95
+    tensor_parallel: 1
+    topology: dense
+    loaded_gb: 9
+    vllm_image: vllm/vllm-openai:voxtral-fix
+    vllm_extra_flags: "--max-model-len 1024 --max-num-seqs 64 --max-num-batched-tokens 49152 --kv-cache-dtype fp8 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
+
+  # Variant 5 — Stretch: FP8 KV + max-model-len 256 (~20s audio cap). Highest
+  # concurrency; WER risk if any LibriSpeech utterance exceeds the decoder budget.
+  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
+    label: voxtral-mini-4b-patched-128
+    role: small
+    modality: stt
+    quantization: none
+    gpu_memory_util: 0.95
+    tensor_parallel: 1
+    topology: dense
+    loaded_gb: 9
+    vllm_image: vllm/vllm-openai:voxtral-fix
+    vllm_extra_flags: "--max-model-len 256 --max-num-seqs 128 --max-num-batched-tokens 65536 --kv-cache-dtype fp8 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
+
   - name: mistralai/Voxtral-Mini-3B-2507
     label: voxtral-mini-3b
     role: small

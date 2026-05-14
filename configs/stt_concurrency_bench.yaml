@@ -22,8 +22,10 @@ dataset:
   path: "/assets/librispeech-test-clean/LibriSpeech/test-clean"
   max_files: 200              # Use up to 200 files for thorough benchmarking
 
-# Concurrency levels to sweep — measures how the model degrades under load
-concurrency_levels: [1, 2, 3, 4, 6, 8, 16, 24, 32]
+# Concurrency levels to sweep — measures how the model degrades under load.
+# Range covers sanity (8), the previously-proven point (32), and the L40S
+# stretch range (48–128) reached by the patched/-fast/-64/-fp8kv/-128 variants.
+concurrency_levels: [8, 16, 32, 48, 64, 96, 128]
 
 requests:
   num_requests: 50            # Per concurrency level
