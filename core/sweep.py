@@ -88,7 +88,7 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
     # on Blackwell, since FA2 lacks attention sinks support and FA3 is unavailable).
     attn_backend = model.get("attention_backend", "")
     # Force Marlin MXFP4 kernel (workaround for broken Triton tile::gather4 PTX on sm_120a).
-    mxfp4_marlin = "1" if model.get("mxfp4_use_marlin", False) else ""
+    mxfp4_marlin = "1" if model.get("mxfp4_use_marlin", False) else "0"
 
     lines = [
         f"VLLM_IMAGE={vllm_image}",
@@ -165,8 +165,8 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
     sm_skip_pip = "1" if "gemma4" in sm_image else "0"
     lg_attn_backend = large.get("attention_backend", "")
     sm_attn_backend = small.get("attention_backend", "")
-    lg_mxfp4_marlin = "1" if large.get("mxfp4_use_marlin", False) else ""
-    sm_mxfp4_marlin = "1" if small.get("mxfp4_use_marlin", False) else ""
+    lg_mxfp4_marlin = "1" if large.get("mxfp4_use_marlin", False) else "0"
+    sm_mxfp4_marlin = "1" if small.get("mxfp4_use_marlin", False) else "0"
 
     lines = [
         # ── Port-8000 model (vllm-8000) ──
