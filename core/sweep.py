@@ -81,14 +81,14 @@ def write_env(model: dict, enable_prefix_caching: bool = True, hf_token: str | N
 
     extra_flags = model.get("vllm_extra_flags", "")
     vllm_image = model.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
-    # The gemma4 image bakes in a patched transformers; reinstalling vllm[audio]
-    # in the entrypoint would clobber it and break model loading.
-    skip_pip = "1" if "gemma4" in vllm_image else "0"
+    # Custom images bake their own deps and patched vLLM source. Re-installing
+    # vllm[audio] in the entrypoint would clobber them and break model loading.
+    skip_pip = "1" if any(s in vllm_image for s in ("gemma4", "voxtral-fix")) else "0"
     # Optional per-model attention backend override (e.g. FLASHINFER for gpt-oss
     # on Blackwell, since FA2 lacks attention sinks support and FA3 is unavailable).
     attn_backend = model.get("attention_backend", "")
     # Force Marlin MXFP4 kernel (workaround for broken Triton tile::gather4 PTX on sm_120a).
-    mxfp4_marlin = "1" if model.get("mxfp4_use_marlin", False) else ""
+    mxfp4_marlin = "1" if model.get("mxfp4_use_marlin", False) else "0"
 
     lines = [
         f"VLLM_IMAGE={vllm_image}",
@@ -161,12 +161,12 @@ def write_env_dual(large: dict, small: dict, lg_util: float = 0.65, sm_util: flo
         sm_extra = f"{sm_extra} --max-num-seqs {CO_DEPLOY_DEFAULT_MAX_NUM_SEQS}".strip()
     lg_image = large.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
     sm_image = small.get("vllm_image", "vllm/vllm-openai:cu130-nightly")
-    lg_skip_pip = "1" if "gemma4" in lg_image else "0"
-    sm_skip_pip = "1" if "gemma4" in sm_image else "0"
+    lg_skip_pip = "1" if any(s in lg_image for s in ("gemma4", "voxtral-fix")) else "0"
+    sm_skip_pip = "1" if any(s in sm_image for s in ("gemma4", "voxtral-fix")) else "0"
     lg_attn_backend = large.get("attention_backend", "")
     sm_attn_backend = small.get("attention_backend", "")
-    lg_mxfp4_marlin = "1" if large.get("mxfp4_use_marlin", False) else ""
-    sm_mxfp4_marlin = "1" if small.get("mxfp4_use_marlin", False) else ""
+    lg_mxfp4_marlin = "1" if large.get("mxfp4_use_marlin", False) else "0"
+    sm_mxfp4_marlin = "1" if small.get("mxfp4_use_marlin", False) else "0"
 
     lines = [
         # ── Port-8000 model (vllm-8000) ──
