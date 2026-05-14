@@ -265,108 +265,47 @@ models:
 
   # ── STT (Speech-to-Text) ─────────────────────────────────────────────────
 
-  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
-    label: voxtral-mini-4b
-    role: small
-    modality: stt               # Speech-to-text — benchmarked with WER on audio datasets
-    quantization: none          # BF16; 3.4B LLM + 970M Audio Encoder = 4.4B total
-    gpu_memory_util: 0.95
-    tensor_parallel: 1
-    topology: dense
-    loaded_gb: 9
-    vllm_extra_flags: "--max-model-len 1024 --max-num-seqs 32 --max-num-batched-tokens 32768 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
-
-  # Same model as voxtral-mini-4b but on a locally-built image that hot-patches
-  # vllm-project/vllm PR #39229 into voxtral_realtime.py. The stock cu130-nightly
-  # crashes on concurrent batch POSTs to /v1/audio/transcriptions (tensor size
-  # mismatch in gpu_model_runner._preprocess); the patch fixes the
-  # mixed-batch embedding tensor allocation. Build the image first:
-  #     make build-voxtral-fix
+  # ─────────────────────────────────────────────────────────────────────────
+  # Voxtral-Mini-4B-Realtime — production STT config tuned on a single L40S.
+  #
+  # Uses the locally-built image vllm/vllm-openai:voxtral-fix, which hot-
+  # patches vllm-project/vllm PR #39229 into voxtral_realtime.py. The stock
+  # cu130-nightly image crashes on concurrent batch transcriptions
+  # (POST /v1/audio/transcriptions) at concurrency >= 3 with a tensor-size
+  # mismatch in gpu_model_runner._preprocess — bug in the realtime model's
+  # embed_input_ids when V1 schedules a mixed prefill+decode batch. The patch
+  # allocates a full [num_tokens, embed_dim] zero tensor and scatters
+  # multimodal embeddings using the is_multimodal mask. Build the image once
+  # with: make build-voxtral-fix
+  #
+  # Final flag values were chosen from a five-variant sweep on the L40S
+  # (48 GB GDDR6, sm_89, Ada Lovelace):
+  #   - max-num-seqs=64   bumping to 128 didn't move P50/P95; GPU compute is
+  #                       the ceiling, not the seq cap
+  #   - max-model-len=1024  identical numbers vs 512; using 1024 means no
+  #                         transcript-length caveat
+  #   - max-num-batched-tokens=49152  paired with seqs=64
+  #   - gpu_memory_util=0.92  identical numbers vs 0.95; 8% activation-spike
+  #                           headroom is free
+  #   - cudagraph_mode=PIECEWISE  critical for low TTFW on /v1/realtime; also
+  #                               kept for batch since it doesn't hurt batch
+  #
+  # Sustained numbers on this config:
+  #   128 concurrent batch users, zero failures, WER 3.40% mean / 14.79% P95
+  #   (identical to single-user baseline), P95 latency 4.83 s, P95 RTF 0.53.
+  # See git log + results/ for the full sweep history.
+  # ─────────────────────────────────────────────────────────────────────────
   - name: mistralai/Voxtral-Mini-4B-Realtime-2602
     label: voxtral-mini-4b-patched
     role: small
     modality: stt
-    quantization: none
-    gpu_memory_util: 0.95
-    tensor_parallel: 1
-    topology: dense
-    loaded_gb: 9
-    vllm_image: vllm/vllm-openai:voxtral-fix
-    vllm_extra_flags: "--max-model-len 1024 --max-num-seqs 32 --max-num-batched-tokens 32768 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
-
-  # Variant 1 — Premium UX: smallest batch, lowest tail latency. Expect <16 user cap.
-  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
-    label: voxtral-mini-4b-patched-fast
-    role: small
-    modality: stt
-    quantization: none
-    gpu_memory_util: 0.85
-    tensor_parallel: 1
-    topology: dense
-    loaded_gb: 9
-    vllm_image: vllm/vllm-openai:voxtral-fix
-    vllm_extra_flags: "--max-model-len 512 --max-num-seqs 16 --max-num-batched-tokens 8192 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
-
-  # Variant 3 — Sweet spot: halve per-request KV (max-model-len 512), double seqs to 64.
-  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
-    label: voxtral-mini-4b-patched-64
-    role: small
-    modality: stt
-    quantization: none
-    gpu_memory_util: 0.95
-    tensor_parallel: 1
-    topology: dense
-    loaded_gb: 9
-    vllm_image: vllm/vllm-openai:voxtral-fix
-    vllm_extra_flags: "--max-model-len 512 --max-num-seqs 64 --max-num-batched-tokens 32768 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
-
-  # Variant 4 — Control test: same seqs as -64 but at full 1024 transcript budget.
-  # Tests whether -64's max-model-len=512 was load-bearing for its concurrency win
-  # or whether 1024 still works (the safer choice for real-world long-form audio).
-  # FP8 KV was originally planned here but is incompatible with Voxtral's Whisper
-  # encoder block-pooling attention path on the current vLLM build.
-  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
-    label: voxtral-mini-4b-patched-64-long
-    role: small
-    modality: stt
-    quantization: none
-    gpu_memory_util: 0.95
-    tensor_parallel: 1
-    topology: dense
-    loaded_gb: 9
-    vllm_image: vllm/vllm-openai:voxtral-fix
-    vllm_extra_flags: "--max-model-len 1024 --max-num-seqs 64 --max-num-batched-tokens 49152 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
-
-  # Variant 4b — Production-safety datapoint: -64 config but at 0.92 gpu_memory_util
-  # instead of 0.95. 8% activation-spike headroom (vs 5% at 0.95). Tells us how
-  # much concurrent-user capacity we keep when deploying with a safer margin.
-  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
-    label: voxtral-mini-4b-patched-64-safe
-    role: small
-    modality: stt
-    quantization: none
+    quantization: none          # BF16; 3.4B LLM + 970M Audio Encoder = 4.4B total
     gpu_memory_util: 0.92
     tensor_parallel: 1
     topology: dense
     loaded_gb: 9
     vllm_image: vllm/vllm-openai:voxtral-fix
-    vllm_extra_flags: "--max-model-len 512 --max-num-seqs 64 --max-num-batched-tokens 32768 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
-
-  # Variant 5 — Stretch: max-model-len 256 (~3.2s audio decoder budget per Mistral
-  # docs: 1 token = 80ms) + max-num-seqs 128. Highest concurrency target; WER risk
-  # if any LibriSpeech utterance exceeds the decoder budget. FP8 KV originally
-  # planned here, removed for the same Whisper block-pooling incompatibility.
-  - name: mistralai/Voxtral-Mini-4B-Realtime-2602
-    label: voxtral-mini-4b-patched-128-short
-    role: small
-    modality: stt
-    quantization: none
-    gpu_memory_util: 0.95
-    tensor_parallel: 1
-    topology: dense
-    loaded_gb: 9
-    vllm_image: vllm/vllm-openai:voxtral-fix
-    vllm_extra_flags: "--max-model-len 256 --max-num-seqs 128 --max-num-batched-tokens 65536 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
+    vllm_extra_flags: "--max-model-len 1024 --max-num-seqs 64 --max-num-batched-tokens 49152 --compilation_config '{\"cudagraph_mode\": \"PIECEWISE\"}'"
 
   - name: mistralai/Voxtral-Mini-3B-2507
     label: voxtral-mini-3b
