@@ -157,6 +157,13 @@ stop:
 build-gemma4:
 	docker build --no-cache -f Dockerfile.vllm-gemma4 -t vllm/vllm-openai:gemma4-v2 .
 
+# Build the Voxtral-fixed vLLM image: hot-patches voxtral_realtime.py with
+# vllm-project/vllm PR #39229, which fixes the V1 mixed-batch crash on
+# concurrent /v1/audio/transcriptions requests. Used by the
+# voxtral-mini-4b-patched model entry.
+build-voxtral-fix:
+	docker build -f Dockerfile.vllm-voxtral-fixed -t vllm/vllm-openai:voxtral-fix .
+
 results:
 	@echo "=== Result Files (most recent first) ==="
 	@ls -lht results/ | head -40
@@ -175,4 +182,4 @@ tui:
 	stt-sanity stt-bench mixed-co-deploy download-stt-data \
 	stt-streaming-sanity stt-streaming-bench \
 	bench-sanity bench-concurrency \
-	logs status stop build-gemma4 results gpu-monitor prefetch tui
+	logs status stop build-gemma4 build-voxtral-fix results gpu-monitor prefetch tui

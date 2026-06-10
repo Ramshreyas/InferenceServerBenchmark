@@ -1,0 +1,57 @@
+# =============================================================================
+# Dockerfile.vllm-voxtral-fixed — vLLM image with PR #39229 hot-patched in
+# =============================================================================
+#
+# RETIRE THIS FILE once vLLM ships PR #39229 in a release that propagates to
+# the cu130-nightly tag.  Track: https://github.com/vllm-project/vllm/pull/39229
+# After it merges and the fix is in a recent cu130-nightly:
+#   1. Run a sanity bench on stock cu130-nightly with concurrency >= 3 to
+#      confirm the crash is gone.
+#   2. Drop the `vllm_image: vllm/vllm-openai:voxtral-fix` line from the
+#      voxtral-mini-4b-patched entry in models.yaml.
+#   3. Delete this Dockerfile and the `build-voxtral-fix` target in Makefile.
+#   4. Remove the "voxtral-fix" substring check in core/sweep.py
+#      (write_env and write_env_dual `skip_pip` calculations).
+#
+# =============================================================================
+# Voxtral-Mini-4B-Realtime-2602 crashes on V1 engine when the scheduler mixes a
+# prefilling request (audio) with one or more decoding requests (text-only) in
+# the same step. The realtime model's `embed_input_ids` returns a flat MM-only
+# embeddings tensor whose row count does not match `num_scheduled_tokens`, so
+# gpu_model_runner._preprocess hits:
+#
+#   RuntimeError: The size of tensor a (N) must match the size of tensor b (M)
+#     at non-singleton dimension 0
+#
+# Upstream fix: vllm-project/vllm PR #39229 (open, unmerged as of 2026-05).
+# This image hot-copies the patched voxtral_realtime.py from the PR's head SHA
+# (9942f5c50acdcb08d7e0ee94cf2528d21dbde1ad) into the stock cu130-nightly
+# image. Confirmed working on HF model discussion #38.
+#
+# Build:
+#   make build-voxtral-fix
+#   # or directly:
+#   docker build -f Dockerfile.vllm-voxtral-fixed -t vllm/vllm-openai:voxtral-fix .
+#
+# Refs:
+#   - https://github.com/vllm-project/vllm/pull/39229
+#   - https://github.com/vllm-project/vllm/issues/38233
+#   - https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-2602/discussions/38
+# =============================================================================
+
+FROM vllm/vllm-openai:cu130-nightly
+
+ARG PATCH_SHA=9942f5c50acdcb08d7e0ee94cf2528d21dbde1ad
+
+# Bake audio extras at build time so entrypoint pip install isn't needed.
+# (Keeping it does not clobber the patch — but doing it here is faster startup
+# and lets the model entry use SKIP_ENTRYPOINT_PIP=1.)
+RUN pip install --no-cache-dir 'vllm[audio]' soxr librosa soundfile 'mistral-common[audio]'
+
+# Hot-patch the single file with PR #39229's fix. Pinned to the exact SHA so
+# the patch can't drift if the PR force-pushes.
+RUN curl -fsSL \
+      "https://raw.githubusercontent.com/parasol-aser/vllm/${PATCH_SHA}/vllm/model_executor/models/voxtral_realtime.py" \
+      -o /usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/voxtral_realtime.py \
+ && grep -q 'is_multimodal' /usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/voxtral_realtime.py \
+ && echo "patch applied OK"
